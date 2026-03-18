@@ -1,0 +1,39 @@
+# Sample route: REST-to-REST passthrough
+# This demonstrates the Camel YAML DSL format used by Cogniviti Bridge.
+#
+# What this does:
+#   1. HTTP server triggers on POST /api/invoke
+#   2. Logs the received body
+#   3. Forwards the body to a configurable target REST endpoint
+#   4. Returns the response
+#
+# Environment variables expected at runtime:
+#   SOURCE_PORT      - port to listen on (default: 9090)
+#   TARGET_BASE_URL  - base URL of the target REST service
+#   TARGET_PATH      - path on the target (default: /api/receive)
+
+- route:
+    id: rest-to-rest-passthrough
+    description: "Cogniviti Bridge – REST to REST passthrough (starter template)"
+    from:
+      uri: "platform-http:/api/invoke"
+      parameters:
+        httpMethodRestrict: POST
+    steps:
+      - log:
+          message: "Received payload: ${body}"
+          loggingLevel: INFO
+
+      - setHeader:
+          name: Content-Type
+          constant: application/json
+
+      # Forward to target
+      - toD:
+          uri: "{{target.base-url}}{{target.path:=/api/receive}}"
+          parameters:
+            httpMethod: POST
+
+      - log:
+          message: "Target responded with: ${body}"
+          loggingLevel: INFO

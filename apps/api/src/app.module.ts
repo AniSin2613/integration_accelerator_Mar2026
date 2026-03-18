@@ -1,0 +1,37 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import { PrismaModule } from './prisma/prisma.module';
+import { HealthModule } from './modules/health/health.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { TenantsModule } from './modules/tenants/tenants.module';
+import { WorkspacesModule } from './modules/workspaces/workspaces.module';
+import { MembershipsModule } from './modules/memberships/memberships.module';
+import { ConnectionsModule } from './modules/connections/connections.module';
+import { TemplatesModule } from './modules/templates/templates.module';
+import { MappingsModule } from './modules/mappings/mappings.module';
+import { ReleasesModule } from './modules/releases/releases.module';
+import { RunsModule } from './modules/runs/runs.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { CamelModule } from './modules/camel/camel.module';
+import { IntegrationsModule } from './modules/integrations/integrations.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true }),
+    PrismaModule,
+    HealthModule,
+    AuthModule,
+    TenantsModule,
+    WorkspacesModule,
+    MembershipsModule,
+    ConnectionsModule,
+    TemplatesModule,
+    MappingsModule,
+    ReleasesModule,
+    RunsModule,
+    AuditModule,
+    CamelModule,
+    IntegrationsModule,
+  ],
+})
+export class AppModule {}

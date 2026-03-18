@@ -1,0 +1,567 @@
+// Cogniviti Bridge — Prisma Schema
+// Primary database: PostgreSQL
+// Domains: IAM / Core tenancy / Design / Runtime / Reporting / Audit
+//
+// Immutability rules (from blueprint §15.5):
+//   Mutable in place: users, memberships, connectionBindings, environmentOverrides, healthSnapshots
+//   Versioned / immutable: templateVersions, approvedMappingSets, releaseArtifacts
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ENUMS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum EnvironmentType {
+  DEV
+  TEST
+  PROD
+}
+
+enum UserRole {
+  VIEWER
+  BUILDER
+  RELEASE_MANAGER
+  ADMIN
+  PLATFORM_ADMIN
+}
+
+enum TemplateClass {
+  CERTIFIED
+  STARTER
+}
+
+enum BusinessObject {
+  VENDOR
+  PURCHASE_ORDER
+  INVOICE
+  GENERIC
+}
+
+enum ConnectionFamily {
+  REST_OPENAPI
+  SFTP_FILE
+  JDBC_SQL
+  S3
+  WEBHOOK
+  SCHEDULER
+}
+
+enum IntegrationStatus {
+  DRAFT
+  IN_TEST
+  LIVE
+  ATTENTION_NEEDED
+  PAUSED
+}
+
+enum ArtifactStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+  DEPLOYED
+}
+
+enum MappingType {
+  DIRECT
+  CONSTANT
+  DERIVED
+  LOOKUP
+  CONDITIONAL
+}
+
+enum MappingStatus {
+  PENDING_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum RunStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  FAILED
+  RETRYING
+  CANCELLED
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CORE TENANCY
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  workspaces     Workspace[]
+  users          User[]
+  businessEvents BusinessEvent[]
+  auditLogs      AuditLog[]
+}
+
+model Workspace {
+  id        String   @id @default(cuid())
+  tenantId  String
+  name      String
+  slug      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant           Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  environments     Environment[]
+  memberships      Membership[]
+  connectionDefs   ConnectionDefinition[]
+  integrationDefs  IntegrationDefinition[]
+  releaseArtifacts ReleaseArtifact[]
+  auditLogs        AuditLog[]
+
+  @@unique([tenantId, slug])
+}
+
+model Environment {
+  id          String          @id @default(cuid())
+  workspaceId String
+  name        String?         // e.g. "Dev", "Test", "Prod" — derived from type if null
+  type        EnvironmentType
+  createdAt   DateTime        @default(now())
+
+  workspace            Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  connectionBindings   ConnectionEnvBinding[]
+  environmentReleases  EnvironmentRelease[]
+  environmentOverrides EnvironmentOverride[]
+  workflowRuns         WorkflowRun[]
+  healthSnapshots      HealthSnapshot[]
+
+  @@unique([workspaceId, type])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// IAM
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model User {
+  id           String   @id @default(cuid())
+  tenantId     String
+  email        String   @unique
+  name         String
+  passwordHash String?  // nullable — future: delegate to IdP
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant             Tenant             @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  memberships        Membership[]
+  approvalRequests   ApprovalRequest[]  @relation("RequestedBy")
+  reviewedApprovals  ApprovalRequest[]  @relation("ReviewedBy")
+  replayRequests     ReplayRequest[]
+  auditLogs          AuditLog[]
+}
+
+model Membership {
+  id          String   @id @default(cuid())
+  userId      String
+  workspaceId String
+  role        UserRole
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, workspaceId])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// CONNECTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ConnectionDefinition {
+  id          String           @id @default(cuid())
+  workspaceId String
+  name        String
+  family      ConnectionFamily
+  // Non-sensitive configuration (base URL pattern, auth scheme, schema).
+  // Sensitive values (credentials) are stored in a secret manager;
+  // only the reference key is held here.
+  config      Json
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  workspace   Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  envBindings ConnectionEnvBinding[]
+  testHistory ConnectionTestHistory[]
+}
+
+model ConnectionEnvBinding {
+  id              String   @id @default(cuid())
+  connectionDefId String
+  environmentId   String
+  // Reference key into the secret manager (e.g. AWS Secrets Manager ARN or Vault path).
+  // NEVER store the raw credential here.
+  secretRef       String?
+  // Bounded operational overrides: base URL, token endpoint, etc.
+  overrideConfig  Json?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  connectionDef ConnectionDefinition @relation(fields: [connectionDefId], references: [id], onDelete: Cascade)
+  environment   Environment          @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+
+  @@unique([connectionDefId, environmentId])
+}
+
+model ConnectionTestHistory {
+  id              String   @id @default(cuid())
+  connectionDefId String
+  environmentId   String
+  success         Boolean
+  testedAt        DateTime @default(now())
+  errorMessage    String?
+
+  connectionDef ConnectionDefinition @relation(fields: [connectionDefId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — TEMPLATES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model TemplateDefinition {
+  id             String         @id @default(cuid())
+  name           String
+  description    String?
+  class          TemplateClass
+  sourceSystem   String?        // e.g. "Coupa", "GEP", "Generic"
+  targetSystem   String?        // e.g. "SAP", "Dynamics", "Generic"
+  businessObject BusinessObject
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  versions        TemplateVersion[]
+  integrationDefs IntegrationDefinition[]
+}
+
+// Template versions are immutable once published.
+model TemplateVersion {
+  id                 String    @id @default(cuid())
+  templateDefId      String
+  version            String    // semver e.g. "1.0.0"
+  // JSON describing the ordered workflow boxes and their allowed configuration.
+  workflowStructure  Json
+  // Suggested default mapping hints baked into the template.
+  defaultMappings    Json?
+  // Base Camel YAML route template with placeholders for connection/mapping values.
+  camelRouteTemplate String?
+  isLatest           Boolean   @default(false)
+  publishedAt        DateTime?
+  createdAt          DateTime  @default(now())
+
+  templateDef     TemplateDefinition  @relation(fields: [templateDefId], references: [id], onDelete: Restrict)
+  schemaPacks     SchemaPackBinding[]
+  integrationDefs IntegrationDefinition[]
+
+  @@unique([templateDefId, version])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — SCHEMA PACKS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model SchemaPack {
+  id        String   @id @default(cuid())
+  name      String   // e.g. "Coupa Invoice v1"
+  system    String   // e.g. "Coupa"
+  object    String   // e.g. "Invoice"
+  version   String
+  createdAt DateTime @default(now())
+
+  fields   SchemaField[]
+  bindings SchemaPackBinding[]
+}
+
+model SchemaField {
+  id           String  @id @default(cuid())
+  schemaPackId String
+  path         String  // e.g. "invoice.header.amount"
+  dataType     String  // e.g. "String", "Decimal", "Date"
+  required     Boolean @default(false)
+  description  String?
+  example      String?
+
+  schemaPack SchemaPack @relation(fields: [schemaPackId], references: [id], onDelete: Cascade)
+}
+
+model SchemaPackBinding {
+  id                String @id @default(cuid())
+  templateVersionId String
+  schemaPackId      String
+  // "SOURCE" or "TARGET"
+  role              String
+
+  templateVersion TemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
+  schemaPack      SchemaPack      @relation(fields: [schemaPackId], references: [id], onDelete: Restrict)
+
+  @@unique([templateVersionId, schemaPackId, role])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — INTEGRATION DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// An IntegrationDefinition is one live instance of a template within a workspace.
+// e.g. "Coupa-to-SAP Invoice sync for ACME Procurement workspace"
+model IntegrationDefinition {
+  id                String            @id @default(cuid())
+  workspaceId       String
+  templateDefId     String
+  templateVersionId String
+  name              String
+  status            IntegrationStatus @default(DRAFT)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  templateDef     TemplateDefinition @relation(fields: [templateDefId], references: [id], onDelete: Restrict)
+  templateVersion TemplateVersion    @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+
+  mappingSets      MappingSet[]
+  releaseArtifacts ReleaseArtifact[]
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — MAPPINGS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// A MappingSet groups all field mapping rules for one integration at one point in time.
+// On approval it becomes immutable (snapshotJson is captured).
+model MappingSet {
+  id               String    @id @default(cuid())
+  integrationDefId String
+  version          Int       @default(1)
+  isApproved       Boolean   @default(false)
+  approvedAt       DateTime?
+  approvedByUserId String?
+  // Immutable snapshot captured at approval time for reliable artifact packaging.
+  snapshotJson     Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  integrationDef IntegrationDefinition @relation(fields: [integrationDefId], references: [id], onDelete: Restrict)
+  rules          MappingRule[]
+}
+
+model MappingRule {
+  id              String        @id @default(cuid())
+  mappingSetId    String
+  sourceField     String
+  targetField     String
+  mappingType     MappingType   @default(DIRECT)
+  // Transform configuration (e.g. date format pattern, lookup table reference)
+  transformConfig Json?
+  status          MappingStatus @default(PENDING_REVIEW)
+  // AI suggestion metadata (zero-trust; requires human approval before use).
+  // aiEvidenceSource stores one-or-many categories joined by "|":
+  // INTERNAL_APPROVED, SOURCE_PLATFORM_OFFICIAL_DOCS,
+  // TARGET_PLATFORM_OFFICIAL_DOCS, OFFICIAL_OPENAPI_SPEC,
+  // OFFICIAL_FIELD_DICTIONARY, CURATED_SCHEMA_PACK
+  aiConfidence    Decimal?
+  aiEvidenceSource String?
+  aiExplanation   String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  mappingSet MappingSet @relation(fields: [mappingSetId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — RELEASE & PROMOTION
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// A ReleaseArtifact is a point-in-time snapshot of everything needed to deploy
+// an integration. Once approved it becomes immutable.
+model ReleaseArtifact {
+  id               String         @id @default(cuid())
+  workspaceId      String
+  integrationDefId String
+  version          String         // e.g. "1.0.0", "1.1.0"
+  // The complete generated Camel YAML route (stored as text for auditability)
+  camelYaml        String
+  // Full mapping state captured at release time
+  mappingSnapshot  Json
+  status           ArtifactStatus @default(DRAFT)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  integrationDef  IntegrationDefinition @relation(fields: [integrationDefId], references: [id], onDelete: Restrict)
+
+  environmentReleases EnvironmentRelease[]
+  approvalRequests    ApprovalRequest[]
+}
+
+// Tracks which artifact is deployed to which environment.
+model EnvironmentRelease {
+  id                String    @id @default(cuid())
+  releaseArtifactId String
+  environmentId     String
+  deployedAt        DateTime?
+  deployedByUserId  String?
+  createdAt         DateTime  @default(now())
+
+  releaseArtifact ReleaseArtifact @relation(fields: [releaseArtifactId], references: [id], onDelete: Restrict)
+  environment     Environment     @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+
+  @@unique([releaseArtifactId, environmentId])
+}
+
+// Bounded operational overrides — only allowed field keys are supported.
+// Test and Prod cannot deviate from the promoted artifact structure.
+model EnvironmentOverride {
+  id            String   @id @default(cuid())
+  environmentId String
+  // Allowed keys: BASE_URL, TOKEN_ENDPOINT, CRON_EXPRESSION, WEBHOOK_URL,
+  //   FILE_PATH, BUCKET_PATH, ALERT_RECIPIENTS, THROTTLE_LIMIT, CONCURRENCY
+  key           String
+  // Plain non-sensitive value (e.g. a base URL). Sensitive values use secretRef.
+  value         String?
+  // Reference to secret manager key — not the raw secret value.
+  secretRef     String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+
+  @@unique([environmentId, key])
+}
+
+model ApprovalRequest {
+  id                String         @id @default(cuid())
+  releaseArtifactId String
+  requestedByUserId String
+  reviewedByUserId  String?
+  status            ArtifactStatus @default(SUBMITTED)
+  notes             String?
+  reviewedAt        DateTime?
+  createdAt         DateTime       @default(now())
+
+  releaseArtifact ReleaseArtifact @relation(fields: [releaseArtifactId], references: [id], onDelete: Restrict)
+  requestedBy     User            @relation("RequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+  reviewedBy      User?           @relation("ReviewedBy", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RUNTIME TRACKING
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model WorkflowRun {
+  id               String    @id @default(cuid())
+  environmentId    String
+  integrationDefId String
+  // Which artifact was active during this run (nullable during early scaffold)
+  releaseArtifactId String?
+  status           RunStatus @default(PENDING)
+  // e.g. "SCHEDULE", "WEBHOOK", "MANUAL"
+  trigger          String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  durationMs       Int?
+  recordsProcessed Int?
+  errorCount       Int?
+  createdAt        DateTime  @default(now())
+
+  environment    Environment     @relation(fields: [environmentId], references: [id], onDelete: Restrict)
+  runItems       RunItem[]
+  replayRequests ReplayRequest[]
+}
+
+model RunItem {
+  id            String    @id @default(cuid())
+  workflowRunId String
+  // Business-domain key for traceability (e.g. invoice number, PO number)
+  businessKey   String?
+  status        RunStatus
+  errorMessage  String?
+  // Structured failure reason for KPI reporting
+  failureReason String?
+  processedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  workflowRun WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+}
+
+model ReplayRequest {
+  id                String    @id @default(cuid())
+  workflowRunId     String
+  requestedByUserId String
+  status            RunStatus @default(PENDING)
+  createdAt         DateTime  @default(now())
+
+  workflowRun WorkflowRun @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  requestedBy User        @relation(fields: [requestedByUserId], references: [id], onDelete: Restrict)
+}
+
+model HealthSnapshot {
+  id               String   @id @default(cuid())
+  environmentId    String
+  uptimePct        Decimal?
+  errorRatePct     Decimal?
+  avgLatencyMs     Int?
+  recordsProcessed Int?
+  snapshotAt       DateTime @default(now())
+
+  environment Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// REPORTING — Business Event Ledger
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// The business event ledger powers KPI reports separately from low-level run logs.
+// This is a V1 differentiator: ready-made reportable facts, not just raw logs.
+model BusinessEvent {
+  id             String         @id @default(cuid())
+  tenantId       String
+  workspaceId    String
+  integrationId  String
+  // e.g. "INVOICE_PROCESSED", "VENDOR_SYNCED", "PO_CREATED"
+  eventType      String
+  businessObject BusinessObject
+  // The business-domain key (e.g. invoice number, vendor ID)
+  businessKey    String?
+  success        Boolean
+  processingMs   Int?
+  occurredAt     DateTime       @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// AUDIT LOG
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  tenantId    String
+  workspaceId String?
+  userId      String?
+  // Structured action label (e.g. "MAPPING_APPROVED", "RELEASE_DEPLOYED")
+  action      String
+  entityType  String?
+  entityId    String?
+  // Contextual details — kept minimal; no raw payloads
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+}

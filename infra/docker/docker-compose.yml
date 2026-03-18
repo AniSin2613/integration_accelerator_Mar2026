@@ -1,0 +1,85 @@
+services:
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cb_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cogniviti}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-cogniviti_bridge}
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-cogniviti}']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── API (NestJS) ───────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: cb_api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-cogniviti}:${POSTGRES_PASSWORD:-local_dev_password}@postgres:5432/${POSTGRES_DB:-cogniviti_bridge}
+      # Auth stub secret — not a real secret, dev-only
+      AUTH_STUB_SECRET: dev_stub_secret_not_for_production
+      CAMEL_RUNNER_URL: http://camel-runner:8080
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - '4000:4000'
+    volumes:
+      # Mount source for hot reload in dev
+      - ../../apps/api/src:/app/apps/api/src:delegated
+      - ../../packages:/app/packages:delegated
+      # Shared volume for writing route files consumed by camel-runner
+      - camel_routes:/app/camel-routes
+
+  # ── Web (Next.js) ─────────────────────────────────────────────────────────
+  web:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+    container_name: cb_web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      # Inside Docker, web calls api service directly
+      INTERNAL_API_URL: http://api:4000
+    ports:
+      - '3000:3000'
+    volumes:
+      - ../../apps/web/src:/app/apps/web/src:delegated
+
+  # ── Camel Runner ──────────────────────────────────────────────────────────
+  camel-runner:
+    build:
+      context: ../../services/camel-runner
+      dockerfile: Dockerfile
+    container_name: cb_camel_runner
+    restart: unless-stopped
+    environment:
+      RUNNER_PORT: 8080
+    ports:
+      - '8080:8080'
+    volumes:
+      # Routes are written here by the API before execution
+      - camel_routes:/app/routes
+
+volumes:
+  postgres_data:
+  camel_routes:

@@ -1,0 +1,46 @@
+# ─── Stage 1: deps ───────────────────────────────────────────────────────────
+FROM node:20-alpine AS deps
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
+COPY apps/web/package.json ./apps/web/
+COPY packages/domain/package.json ./packages/domain/
+
+RUN pnpm install --frozen-lockfile
+
+# ─── Stage 2: build ──────────────────────────────────────────────────────────
+FROM node:20-alpine AS builder
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
+COPY . .
+
+RUN pnpm --filter @cogniviti/domain build
+RUN pnpm --filter @cogniviti/web build
+
+# ─── Stage 3: runner ─────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV=production
+
+COPY --from=builder /app/apps/web/.next/standalone ./
+COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=builder /app/apps/web/public ./apps/web/public
+
+WORKDIR /app/apps/web
+
+EXPOSE 3000
+
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]
