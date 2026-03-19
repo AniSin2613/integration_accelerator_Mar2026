@@ -34,7 +34,7 @@ export default function LoginPage() {
   return (
     <div className="bg-background-light font-display min-h-screen text-text-main flex flex-col">
       {/* Minimal Header */}
-      <header className="flex items-center justify-between border-b border-border-soft bg-surface px-6 lg:px-10 py-4">
+      <header className="flex items-center border-b border-border-soft bg-surface px-6 lg:px-10 py-4">
         <Link href="/" className="flex items-center gap-3 text-text-main">
           <div className="size-6 text-primary">
             <svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
@@ -60,13 +60,16 @@ export default function LoginPage() {
       </header>
 
       {/* Login Form */}
-      <main className="flex-1 flex items-center justify-center px-6 py-12">
-        <div className="w-full max-w-[400px]">
-          <div className="bg-surface rounded-xl border border-border-soft shadow-soft p-8">
-            <div className="text-center mb-8">
-              <h1 className="text-2xl font-bold text-text-main mb-2">Welcome back</h1>
-              <p className="text-sm text-text-muted">
-                Sign in to your Cogniviti Bridge workspace
+      <main className="flex-1 flex items-center justify-center px-6 pt-8 pb-20">
+        <div className="w-full max-w-[425px]">
+          <div className="bg-surface rounded-xl border border-slate-200/60 shadow-soft p-9 sm:p-10">
+            <div className="text-center mb-5">
+              <h1 className="text-[22px] font-bold text-text-main mb-3 leading-tight">Sign in to Cogniviti Bridge</h1>
+              <p className="text-[14px] text-text-muted leading-relaxed">
+                Access integrations, releases, monitoring, and operational health in one secure workspace.
+              </p>
+              <p className="text-[12px] text-text-muted/70 mt-2">
+                Workspace access managed by your organization
               </p>
             </div>
 
@@ -81,7 +84,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@company.com"
-                  className="h-11 px-4 rounded-lg border border-border-soft bg-background-light text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+                  className="h-11 px-4 rounded-lg border border-slate-400 bg-background-light text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
                   autoComplete="email"
                 />
               </div>
@@ -91,7 +94,7 @@ export default function LoginPage() {
                   <label htmlFor="password" className="text-sm font-medium text-text-main">
                     Password
                   </label>
-                  <a href="#" className="text-xs text-primary hover:text-primary/80 font-medium transition-colors">
+                  <a href="#" className="text-xs text-text-muted/50 hover:text-text-main font-medium transition-colors">
                     Forgot password?
                   </a>
                 </div>
@@ -101,7 +104,7 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="h-11 px-4 rounded-lg border border-border-soft bg-background-light text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
+                  className="h-11 px-4 rounded-lg border border-slate-400 bg-background-light text-sm text-text-main placeholder:text-text-muted/50 focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors"
                   autoComplete="current-password"
                 />
               </div>
@@ -113,7 +116,7 @@ export default function LoginPage() {
               <button
                 type="submit"
                 disabled={loading}
-                className="h-11 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-2"
+                className="h-[52px] rounded-lg bg-primary text-white text-[15px] font-semibold hover:bg-primary/90 transition-colors disabled:opacity-60 flex items-center justify-center gap-2 shadow-soft"
               >
                 {loading ? (
                   <>
@@ -136,8 +139,11 @@ export default function LoginPage() {
             </div>
           </div>
 
-          <p className="text-center text-xs text-text-muted mt-6">
-            By signing in, you agree to our Terms of Service and Privacy Policy.
+          <p className="text-center text-xs text-text-muted/35 mt-7">
+            By signing in, you agree to our{' '}
+            <a href="#" className="underline hover:text-text-main transition-colors">Terms of Service</a>{' '}
+            and{' '}
+            <a href="#" className="underline hover:text-text-main transition-colors">Privacy Policy</a>.
           </p>
         </div>
       </main>
