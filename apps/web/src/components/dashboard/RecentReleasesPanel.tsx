@@ -19,7 +19,7 @@ export function RecentReleasesPanel({ rows }: RecentReleasesPanelProps) {
       {rows.length === 0 ? (
         <div className="p-5 text-center">
           <p className="text-[16px] font-semibold text-text-main">No releases yet</p>
-          <p className="text-sm text-text-muted mt-2">
+          <p className="text-sm text-text-muted/50 mt-2">
             Releases will appear after integrations are promoted across environments
           </p>
         </div>

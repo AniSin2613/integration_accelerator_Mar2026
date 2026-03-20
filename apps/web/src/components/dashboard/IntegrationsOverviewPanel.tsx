@@ -22,7 +22,7 @@ export function IntegrationsOverviewPanel({ rows }: IntegrationsOverviewPanelPro
       {rows.length === 0 ? (
         <div className="py-5 px-6 text-center">
           <p className="text-[16px] font-semibold text-text-main">No integrations created yet</p>
-          <p className="text-sm text-text-muted mt-2 max-w-[560px] mx-auto">
+          <p className="text-sm text-text-muted/50 mt-2 max-w-[560px] mx-auto">
             Start by adding a connection, selecting a template, or creating your first integration
           </p>
           <div className="mt-3.5 flex flex-wrap items-center justify-center gap-2">
