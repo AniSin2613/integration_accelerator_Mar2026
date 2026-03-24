@@ -12,6 +12,7 @@ export class AuditController {
     @Param('workspaceId') workspaceId: string,
     @Query('limit') limit?: string,
   ) {
-    return this.service.findByWorkspace(workspaceId, limit ? parseInt(limit, 10) : 50);
+    const safeLimit = Math.min(Math.max(parseInt(limit ?? '50', 10) || 50, 1), 200);
+    return this.service.findByWorkspace(workspaceId, safeLimit);
   }
 }

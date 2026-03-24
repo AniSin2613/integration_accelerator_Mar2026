@@ -196,6 +196,9 @@ model ConnectionDefinition {
   config      Json
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+  // Soft-delete: non-null means the connection was removed by the user.
+  // Kept for audit; hidden from all UI/API list queries.
+  deletedAt   DateTime?
 
   workspace   Workspace              @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   envBindings ConnectionEnvBinding[]

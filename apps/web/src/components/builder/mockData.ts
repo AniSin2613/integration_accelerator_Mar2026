@@ -1,0 +1,228 @@
+import { type BuilderState, type StepMeta, type TargetDestination } from './types';
+
+export const DEFAULT_STEPS: StepMeta[] = [
+  { id: 'trigger', label: 'Trigger', icon: 'bolt', status: 'not-started' },
+  { id: 'sourceGroup', label: 'Sources', icon: 'cloud_download', status: 'not-started' },
+  { id: 'mapping', label: 'Mapping', icon: 'schema', status: 'not-started' },
+  { id: 'validation', label: 'Validation', icon: 'rule', status: 'not-started' },
+  { id: 'targetGroup', label: 'Targets', icon: 'cloud_upload', status: 'not-started' },
+  { id: 'responseHandling', label: 'Responses', icon: 'reply', status: 'not-started' },
+  { id: 'operations', label: 'Ops', icon: 'monitoring', status: 'not-started' },
+];
+
+export function createBlankBuilderState(integrationId: string, name: string): BuilderState {
+  return {
+    integrationId,
+    integrationName: name,
+    templateLabel: '',
+    versionLabel: 'v1.0 Draft',
+    validationStatus: 'Not validated',
+    environment: 'Dev',
+    activeStep: 'trigger',
+    steps: DEFAULT_STEPS.map((s) => ({ ...s })),
+    trigger: {
+      triggerType: 'Schedule / Cron',
+      cronExpression: '',
+      timezone: 'UTC',
+      webhookPath: '',
+      webhookMethod: 'POST',
+      manualExecutionEnabled: true,
+      description: '',
+    },
+    sourceGroup: {
+      primary: {
+        connectionId: '',
+        connectionName: '',
+        connectionFamily: '',
+        healthStatus: '',
+        businessObject: '',
+        operation: 'GET',
+        endpointPath: '',
+        queryParams: [],
+        customParams: [],
+        paginationEnabled: false,
+        paginationStrategy: 'None',
+        pageSize: 100,
+        incrementalReadMode: 'Off',
+      },
+      enrichmentSources: [],
+      processingPattern: 'Single Source',
+    },
+    mapping: { mappings: [], unmappedSourceFields: [], unmappedTargetFields: [] },
+    validation: { rules: [], policyMode: 'Balanced' },
+    targetGroup: { targets: [], deliveryPattern: 'Single Target' },
+    responseHandling: {
+      successPolicy: '2xx only',
+      errorPolicy: 'Normalize & Route',
+      callbackEnabled: false,
+      callbackDestination: '',
+      callbackMethod: 'POST',
+      businessResponseMappingEnabled: false,
+      partialSuccessPolicy: 'All-or-nothing',
+    },
+    operations: {
+      alertChannel: 'None',
+      alertDestination: '',
+      errorThresholdPercent: 5,
+      enableRetry: false,
+      maxRetries: 3,
+      retryDelayMs: 5000,
+      deadLetterEnabled: false,
+      deadLetterTopic: '',
+      telemetryMode: 'Standard',
+      diagnosticsLevel: 'Basic',
+      traceRetentionDays: 7,
+    },
+    isDirty: false,
+    isSaving: false,
+    lastSavedAt: null,
+    selectedMappingId: null,
+    selectedRuleId: null,
+  };
+}
+
+export function createDemoBuilderState(integrationId: string): BuilderState {
+  const primaryTarget: TargetDestination = {
+    id: 't1',
+    name: 'SAP Primary',
+    priority: 1,
+    connectionId: 'conn-sap-prod',
+    connectionName: 'SAP S/4HANA Prod',
+    connectionFamily: 'REST / OpenAPI outbound',
+    healthStatus: 'Healthy',
+    businessObject: 'SupplierInvoice',
+    operation: 'POST',
+    endpointPath: '/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice',
+    writeMode: 'Create',
+    upsertKeyField: '',
+    batchSize: 1,
+    params: [],
+    conflictHandling: 'Overwrite',
+  };
+
+  return {
+    integrationId,
+    integrationName: 'Coupa to SAP Invoice Sync',
+    templateLabel: 'Coupa → SAP Certified Template',
+    versionLabel: 'v2.3 Draft',
+    validationStatus: 'Warnings',
+    environment: 'Dev',
+    activeStep: 'trigger',
+    steps: [
+      { id: 'trigger', label: 'Trigger', icon: 'bolt', status: 'complete' },
+      { id: 'sourceGroup', label: 'Sources', icon: 'cloud_download', status: 'complete' },
+      { id: 'mapping', label: 'Mapping', icon: 'schema', status: 'warning' },
+      { id: 'validation', label: 'Validation', icon: 'rule', status: 'in-progress' },
+      { id: 'targetGroup', label: 'Targets', icon: 'cloud_upload', status: 'complete' },
+      { id: 'responseHandling', label: 'Responses', icon: 'reply', status: 'warning' },
+      { id: 'operations', label: 'Ops', icon: 'monitoring', status: 'in-progress' },
+    ],
+    trigger: {
+      triggerType: 'Schedule / Cron',
+      cronExpression: '0 */15 * * *',
+      timezone: 'UTC',
+      webhookPath: '',
+      webhookMethod: 'POST',
+      manualExecutionEnabled: true,
+      description: 'Poll Coupa invoices every 15 minutes',
+    },
+    sourceGroup: {
+      primary: {
+        connectionId: 'conn-coupa-prod',
+        connectionName: 'Coupa Production API',
+        connectionFamily: 'REST / OpenAPI outbound',
+        healthStatus: 'Healthy',
+        businessObject: 'Invoice',
+        operation: 'GET',
+        endpointPath: '/api/invoices',
+        queryParams: [{ key: 'status', value: 'approved' }],
+        customParams: [{ key: 'includeTax', value: 'true' }],
+        paginationEnabled: true,
+        paginationStrategy: 'Offset',
+        pageSize: 50,
+        incrementalReadMode: 'Timestamp Cursor',
+      },
+      enrichmentSources: [
+        { id: 'es1', connectionName: 'Vendor Master API', interfaceName: 'Vendor', purpose: 'Enrich vendor attributes', strategy: 'Lookup' },
+      ],
+      processingPattern: 'Primary + Enrichment',
+    },
+    mapping: {
+      mappings: [
+        { id: 'm1', sourceField: 'invoice_number', targetField: 'canonical.invoice.id', transform: 'direct', required: true, classification: 'internal' },
+        { id: 'm2', sourceField: 'vendor_name', targetField: 'canonical.vendor.name', transform: 'lookup', required: true, classification: 'confidential' },
+        { id: 'm3', sourceField: 'total_amount', targetField: 'canonical.amount.total', transform: 'direct', required: true, classification: 'internal' },
+        { id: 'm4', sourceField: 'currency', targetField: 'canonical.amount.currency', transform: 'direct', required: true, classification: 'public' },
+        { id: 'm5', sourceField: 'invoice_date', targetField: 'canonical.invoice.date', transform: 'dateFormat(YYYY-MM-DD)', required: true, classification: 'internal' },
+      ],
+      unmappedSourceFields: ['attachments', 'custom_field_1'],
+      unmappedTargetFields: ['canonical.company.code', 'canonical.business.area'],
+    },
+    validation: {
+      rules: [
+        { id: 'vr1', name: 'Amount must be positive', condition: 'record.canonical.amount.total > 0', severity: 'Error', onFailure: 'Reject Record', enabled: true },
+        { id: 'vr2', name: 'Vendor must exist', condition: 'record.canonical.vendor.name != null', severity: 'Warning', onFailure: 'Flag & Continue', enabled: true },
+      ],
+      policyMode: 'Balanced',
+    },
+    targetGroup: {
+      targets: [primaryTarget],
+      deliveryPattern: 'Single Target',
+    },
+    responseHandling: {
+      successPolicy: '2xx + business ack',
+      errorPolicy: 'Normalize & Route',
+      callbackEnabled: true,
+      callbackDestination: 'https://coupa.example.com/api/invoice-ack',
+      callbackMethod: 'POST',
+      businessResponseMappingEnabled: true,
+      partialSuccessPolicy: 'Partial success allowed',
+    },
+    operations: {
+      alertChannel: 'Slack',
+      alertDestination: '#ap-ops-alerts',
+      errorThresholdPercent: 2,
+      enableRetry: true,
+      maxRetries: 3,
+      retryDelayMs: 5000,
+      deadLetterEnabled: true,
+      deadLetterTopic: 'invoice-sync-dlq',
+      telemetryMode: 'Enhanced',
+      diagnosticsLevel: 'Detailed',
+      traceRetentionDays: 14,
+    },
+    isDirty: false,
+    isSaving: false,
+    lastSavedAt: '2024-01-15T10:30:00Z',
+    selectedMappingId: null,
+    selectedRuleId: null,
+  };
+}
+
+export interface MockConnection {
+  id: string;
+  name: string;
+  family: string;
+  status: string;
+  baseUrl: string;
+}
+
+export const MOCK_CONNECTIONS: MockConnection[] = [
+  { id: 'conn-coupa-prod', name: 'Coupa Production API', family: 'REST / OpenAPI outbound', status: 'Healthy', baseUrl: 'https://acme.coupahost.com' },
+  { id: 'conn-coupa-sandbox', name: 'Coupa Sandbox', family: 'REST / OpenAPI outbound', status: 'Healthy', baseUrl: 'https://acme-sandbox.coupahost.com' },
+  { id: 'conn-sap-prod', name: 'SAP S/4HANA Prod', family: 'REST / OpenAPI outbound', status: 'Healthy', baseUrl: 'https://s4h-prod.acme.com:44300' },
+  { id: 'conn-sap-dev', name: 'SAP S/4HANA Dev', family: 'REST / OpenAPI outbound', status: 'Warning', baseUrl: 'https://s4h-dev.acme.com:44300' },
+  { id: 'conn-sftp-vendor', name: 'Vendor SFTP Drop', family: 'SFTP / File', status: 'Healthy', baseUrl: 'sftp://files.vendor.net:22' },
+  { id: 'conn-db-analytics', name: 'Analytics DB', family: 'Database', status: 'Healthy', baseUrl: 'postgresql://analytics-db.acme.internal:5432/warehouse' },
+];
+
+export const DEMO_SOURCE_FIELDS = [
+  'invoice_number', 'vendor_name', 'vendor_id', 'total_amount', 'currency',
+  'invoice_date', 'due_date', 'po_number', 'line_items', 'attachments', 'custom_field_1',
+];
+
+export const DEMO_TARGET_FIELDS = [
+  'canonical.invoice.id', 'canonical.vendor.name', 'canonical.amount.total', 'canonical.amount.currency',
+  'canonical.invoice.date', 'canonical.due.date', 'canonical.purchaseOrder.id', 'canonical.company.code',
+  'canonical.business.area', 'canonical.posting.key', 'canonical.notes',
+];

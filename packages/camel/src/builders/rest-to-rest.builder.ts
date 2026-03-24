@@ -17,6 +17,35 @@ export interface RestToRestRouteParams {
 }
 
 /**
+ * Blocked host patterns to prevent SSRF via Camel route generation.
+ * Blocks internal IPs, metadata endpoints, and localhost.
+ */
+const BLOCKED_HOST_PATTERNS = [
+  /^https?:\/\/169\.254\./,           // AWS/GCP metadata
+  /^https?:\/\/metadata\./,            // Cloud metadata endpoints
+  /^https?:\/\/localhost[:/]/,          // Localhost
+  /^https?:\/\/127\./,                 // Loopback
+  /^https?:\/\/0\./,                   // Zero-address
+  /^https?:\/\/\[::1\]/,              // IPv6 loopback
+  /^https?:\/\/10\./,                  // RFC 1918
+  /^https?:\/\/172\.(1[6-9]|2\d|3[0-1])\./, // RFC 1918
+  /^https?:\/\/192\.168\./,            // RFC 1918
+];
+
+function validateRouteUrl(url: string, label: string): void {
+  // Allow Camel property placeholders (e.g. https://{{source.base-url}})
+  if (url.includes('{{') && url.includes('}}')) {
+    return;
+  }
+
+  for (const pattern of BLOCKED_HOST_PATTERNS) {
+    if (pattern.test(url)) {
+      throw new Error(`${label} URL "${url}" targets a blocked internal address`);
+    }
+  }
+}
+
+/**
  * Builds a Camel YAML DSL route for a REST-to-REST integration.
  *
  * Architecture note: this builder generates a Camel route that:
@@ -29,6 +58,10 @@ export interface RestToRestRouteParams {
  * the camel-runner service for execution.
  */
 export function buildRestToRestRoute(params: RestToRestRouteParams): string {
+  // SSRF protection: validate source and target URLs
+  validateRouteUrl(`${params.sourceBaseUrl}${params.sourcePath}`, 'Source');
+  validateRouteUrl(`${params.targetBaseUrl}${params.targetPath}`, 'Target');
+
   const mappingSteps = params.fieldMappings.map((m) => {
     const base = {
       setHeader: {

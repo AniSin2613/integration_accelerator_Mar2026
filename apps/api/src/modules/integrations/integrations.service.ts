@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CamelService } from '../camel/camel.service';
 import * as fs from 'fs';
@@ -95,9 +95,14 @@ export class IntegrationsService {
     // Write the route file to the shared volume for camel-runner
     try {
       fs.mkdirSync(ROUTES_DIR, { recursive: true });
-      const filePath = path.join(ROUTES_DIR, `${integration.id}.yaml`);
+      const resolvedRoutesDir = path.resolve(ROUTES_DIR);
+      const filePath = path.resolve(path.join(ROUTES_DIR, `${integration.id}.yaml`));
+      if (!filePath.startsWith(resolvedRoutesDir + path.sep)) {
+        throw new BadRequestException('Invalid integration ID for file path');
+      }
       fs.writeFileSync(filePath, yaml, 'utf-8');
-    } catch {
+    } catch (e) {
+      if (e instanceof BadRequestException) throw e;
       // Non-fatal: volume may not be mounted in local dev without Docker
     }
 

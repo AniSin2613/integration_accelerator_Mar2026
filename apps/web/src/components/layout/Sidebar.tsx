@@ -13,9 +13,9 @@ const NAV_ITEMS = [
 ] as const;
 
 const FOOTER_LINKS = [
-  { label: 'Documentation', icon: 'menu_book' },
-  { label: 'Getting Started', icon: 'rocket_launch' },
-  { label: 'Support / Contact', icon: 'support_agent' },
+  { label: 'Documentation', icon: 'menu_book', href: '/docs' },
+  { label: 'Getting Started', icon: 'rocket_launch', href: '/docs/getting-started' },
+  { label: 'Support / Contact', icon: 'support_agent', href: '/support' },
 ] as const;
 
 interface SidebarProps {
@@ -58,7 +58,7 @@ function SidebarFooter({ onNavigate }: { onNavigate?: () => void }) {
       {FOOTER_LINKS.map((link) => (
         <a
           key={link.label}
-          href="#"
+          href={link.href}
           onClick={onNavigate}
           className="flex items-center gap-3 px-3 py-2 rounded-lg text-[13px] text-text-muted hover:bg-slate-50 hover:text-text-main transition-colors"
         >

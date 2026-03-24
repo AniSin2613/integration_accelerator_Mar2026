@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
@@ -12,6 +13,8 @@ import { SubmitApprovalDto } from './dto/submit-approval.dto';
 
 @Injectable()
 export class ReleasesService {
+  private readonly logger = new Logger(ReleasesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly camel: CamelService,
@@ -176,7 +179,7 @@ export class ReleasesService {
       action: 'RELEASE_APPROVED',
       entityType: 'ReleaseArtifact',
       entityId: artifactId,
-    }).catch(() => {});
+    }).catch((err) => this.logger.error('Failed to write audit log for RELEASE_APPROVED', err));
 
     return updated;
   }
@@ -206,24 +209,34 @@ export class ReleasesService {
     });
     if (!environment) throw new NotFoundException(`Environment ${targetEnvironmentId} not found`);
 
-    // Enforce promotion ordering: TEST requires a prior DEV release; PROD requires TEST
+    // Enforce promotion ordering: TEST requires THIS artifact deployed in DEV; PROD requires TEST
     if (environment.type === 'TEST') {
       const devEnv = await this.prisma.environment.findFirst({
         where: { workspaceId: environment.workspaceId, type: 'DEV' },
-        include: { environmentReleases: { take: 1, orderBy: { createdAt: 'desc' } } },
+        include: {
+          environmentReleases: {
+            where: { releaseArtifactId: artifactId },
+            take: 1,
+          },
+        },
       });
       if (!devEnv || devEnv.environmentReleases.length === 0) {
-        throw new ForbiddenException('Artifact must be deployed to DEV before TEST');
+        throw new ForbiddenException('This artifact must be deployed to DEV before TEST');
       }
     }
 
     if (environment.type === 'PROD') {
       const testEnv = await this.prisma.environment.findFirst({
         where: { workspaceId: environment.workspaceId, type: 'TEST' },
-        include: { environmentReleases: { take: 1, orderBy: { createdAt: 'desc' } } },
+        include: {
+          environmentReleases: {
+            where: { releaseArtifactId: artifactId },
+            take: 1,
+          },
+        },
       });
       if (!testEnv || testEnv.environmentReleases.length === 0) {
-        throw new ForbiddenException('Artifact must be deployed to TEST before PROD');
+        throw new ForbiddenException('This artifact must be deployed to TEST before PROD');
       }
     }
 
@@ -249,7 +262,7 @@ export class ReleasesService {
       entityType: 'ReleaseArtifact',
       entityId: artifactId,
       details: { environmentId: targetEnvironmentId, environmentType: environment.type },
-    }).catch(() => {});
+    }).catch((err) => this.logger.error('Failed to write audit log for RELEASE_DEPLOYED', err));
 
     return envRelease;
   }

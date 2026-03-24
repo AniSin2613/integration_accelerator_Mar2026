@@ -72,7 +72,7 @@ export function IntegrationOverviewHeader({
         )}
 
         <Link
-          href={`/integrations/${integrationId}/designer`}
+          href={`/integrations/${integrationId}/builder`}
           className={`inline-flex h-10 items-center justify-center rounded-lg bg-primary px-4 text-sm font-semibold text-white transition-colors hover:bg-primary/90 ${editDisabled ? 'pointer-events-none opacity-40' : ''}`}
           aria-disabled={editDisabled}
           tabIndex={editDisabled ? -1 : undefined}

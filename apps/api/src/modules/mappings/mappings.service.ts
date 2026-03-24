@@ -1,10 +1,12 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma } from '@prisma/client';
 import { CreateMappingSetDto } from './dto/create-mapping-set.dto';
 import { MappingEvidenceSource } from '@cogniviti/domain';
 import { AuditService } from '../audit/audit.service';
@@ -13,27 +15,25 @@ const ALLOWED_EVIDENCE_SOURCES = new Set(Object.values(MappingEvidenceSource));
 
 @Injectable()
 export class MappingsService {
+  private readonly logger = new Logger(MappingsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
 
-  private get db(): any {
-    return this.prisma as any;
-  }
-
   async findByIntegration(integrationDefId: string) {
-    const sets = await this.db.mappingSet.findMany({
+    const sets = await this.prisma.mappingSet.findMany({
       where: { integrationDefId },
       include: { rules: { orderBy: { sourceField: 'asc' } } },
       orderBy: { version: 'desc' },
     });
 
-    return sets.map((set: any) => expandEvidenceSourcesOnSet(set));
+    return sets.map((set) => expandEvidenceSourcesOnSet(set));
   }
 
   async findLatest(integrationDefId: string) {
-    const set = await this.db.mappingSet.findFirst({
+    const set = await this.prisma.mappingSet.findFirst({
       where: { integrationDefId },
       include: { rules: { orderBy: { sourceField: 'asc' } } },
       orderBy: { version: 'desc' },
@@ -44,13 +44,13 @@ export class MappingsService {
 
   async create(integrationDefId: string, dto: CreateMappingSetDto) {
     // Determine next version number
-    const latest = await this.db.mappingSet.findFirst({
+    const latest = await this.prisma.mappingSet.findFirst({
       where: { integrationDefId },
       orderBy: { version: 'desc' },
     });
     const nextVersion = (latest?.version ?? 0) + 1;
 
-    const created = await this.db.mappingSet.create({
+    const created = await this.prisma.mappingSet.create({
       data: {
         integrationDefId,
         version: nextVersion,
@@ -69,7 +69,7 @@ export class MappingsService {
               sourceField: r.sourceField,
               targetField: r.targetField,
               mappingType: r.mappingType ?? 'DIRECT',
-              transformConfig: mergeEvidenceMetadata(r.transformConfig, r.aiEvidenceReferences),
+              transformConfig: mergeEvidenceMetadata(r.transformConfig, r.aiEvidenceReferences) as Prisma.InputJsonValue | undefined,
               // All new rules start as PENDING_REVIEW regardless of source
               status: 'PENDING_REVIEW',
               aiConfidence: r.aiConfidence,
@@ -94,17 +94,17 @@ export class MappingsService {
    * AI confidence alone does NOT auto-approve.
    */
   async approveRule(ruleId: string, approvingUserId: string) {
-    const rule = await this.db.mappingRule.findUnique({ where: { id: ruleId } });
+    const rule = await this.prisma.mappingRule.findUnique({ where: { id: ruleId } });
     if (!rule) throw new NotFoundException(`Mapping rule ${ruleId} not found`);
     if (rule.status === 'APPROVED') throw new BadRequestException('Rule is already approved');
 
-    const updated = await this.db.mappingRule.update({
+    const updated = await this.prisma.mappingRule.update({
       where: { id: ruleId },
       data: { status: 'APPROVED' },
     });
 
     // Audit
-    const set = await this.db.mappingSet.findUnique({ where: { id: rule.mappingSetId }, select: { integrationDefId: true } });
+    const set = await this.prisma.mappingSet.findUnique({ where: { id: rule.mappingSetId }, select: { integrationDefId: true } });
     this.audit.log({
       tenantId: 'system',
       userId: approvingUserId,
@@ -112,7 +112,7 @@ export class MappingsService {
       entityType: 'MappingRule',
       entityId: ruleId,
       details: { integrationDefId: set?.integrationDefId },
-    }).catch(() => {});
+    }).catch((err) => this.logger.error('Failed to write audit log for MAPPING_APPROVED', err));
 
     return updated;
   }
@@ -121,10 +121,10 @@ export class MappingsService {
    * Reject a single mapping rule.
    */
   async rejectRule(ruleId: string) {
-    const rule = await this.db.mappingRule.findUnique({ where: { id: ruleId } });
+    const rule = await this.prisma.mappingRule.findUnique({ where: { id: ruleId } });
     if (!rule) throw new NotFoundException(`Mapping rule ${ruleId} not found`);
 
-    const updated = await this.db.mappingRule.update({
+    const updated = await this.prisma.mappingRule.update({
       where: { id: ruleId },
       data: { status: 'REJECTED' },
     });
@@ -134,7 +134,7 @@ export class MappingsService {
       action: 'MAPPING_REJECTED',
       entityType: 'MappingRule',
       entityId: ruleId,
-    }).catch(() => {});
+    }).catch((err) => this.logger.error('Failed to write audit log for MAPPING_REJECTED', err));
 
     return updated;
   }
@@ -145,13 +145,13 @@ export class MappingsService {
    * Creates an immutable snapshot.
    */
   async approveMappingSet(mappingSetId: string, approvingUserId: string) {
-    const set = await this.db.mappingSet.findUnique({
+    const set = await this.prisma.mappingSet.findUnique({
       where: { id: mappingSetId },
       include: { rules: true },
     });
     if (!set) throw new NotFoundException(`Mapping set ${mappingSetId} not found`);
 
-    const unapproved = set.rules.filter((r: any) => r.status !== 'APPROVED');
+    const unapproved = set.rules.filter((r) => r.status !== 'APPROVED');
     if (unapproved.length > 0) {
       throw new ForbiddenException(
         `${unapproved.length} rule(s) still pending review. All rules must be individually approved before the set can be approved.`,
@@ -161,7 +161,7 @@ export class MappingsService {
     // Capture immutable snapshot
     const snapshot = { version: set.version, rules: set.rules, approvedAt: new Date().toISOString() };
 
-    return this.db.mappingSet.update({
+    return this.prisma.mappingSet.update({
       where: { id: mappingSetId },
       data: {
         isApproved: true,
@@ -229,7 +229,7 @@ function mapLegacyEvidenceToken(token: string): MappingEvidenceSource | null {
   return aliases[upper] ?? null;
 }
 
-function expandEvidenceSourcesOnSet<T extends { rules: Array<{ aiEvidenceSource: string | null }> }>(set: T) {
+function expandEvidenceSourcesOnSet(set: { rules: Array<{ aiEvidenceSource: string | null; [key: string]: unknown }>; [key: string]: unknown }) {
   return {
     ...set,
     rules: set.rules.map((rule) => ({

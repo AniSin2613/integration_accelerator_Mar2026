@@ -1,3 +1,4 @@
+import { FilterBarSection, FilterBarSearch, FilterBarSelect } from '../ui/FilterBar';
 import {
   ENVIRONMENT_FILTER_OPTIONS,
   SORT_OPTIONS,
@@ -23,9 +24,6 @@ interface IntegrationsFilterBarProps {
   onSortChange: (value: SortOption) => void;
 }
 
-const CONTROL_CLASSES =
-  'h-10 w-full rounded-lg border border-border-soft bg-surface px-3 text-sm text-text-main outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
-
 export function IntegrationsFilterBar({
   searchValue,
   status,
@@ -40,92 +38,17 @@ export function IntegrationsFilterBar({
   onSortChange,
 }: IntegrationsFilterBarProps) {
   return (
-    <section className="rounded-xl border border-border-soft bg-surface p-4 shadow-soft">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
-        <label className="relative block md:col-span-2 xl:col-span-1">
-          <span className="sr-only">Search integrations</span>
-          <span className="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-text-muted">
-            search
-          </span>
-          <input
-            type="search"
-            value={searchValue}
-            disabled={disabled}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder="Search integrations"
-            className={`${CONTROL_CLASSES} pl-10`}
-          />
-        </label>
-
-        <label className="block">
-          <span className="sr-only">Status filter</span>
-          <select
-            value={status}
-            disabled={disabled}
-            onChange={(event) => onStatusChange(event.target.value as StatusFilterOption)}
-            className={CONTROL_CLASSES}
-          >
-            {STATUS_FILTER_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="sr-only">Template type filter</span>
-          <select
-            value={templateType}
-            disabled={disabled}
-            onChange={(event) => onTemplateTypeChange(event.target.value as TemplateFilterOption)}
-            className={CONTROL_CLASSES}
-          >
-            {TEMPLATE_FILTER_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="sr-only">Environment filter</span>
-          <select
-            value={environment}
-            disabled={disabled}
-            onChange={(event) => onEnvironmentChange(event.target.value as EnvironmentFilterOption)}
-            className={CONTROL_CLASSES}
-          >
-            {ENVIRONMENT_FILTER_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block">
-          <span className="sr-only">Sort integrations</span>
-          <select
-            value={sortBy}
-            disabled={disabled}
-            onChange={(event) => onSortChange(event.target.value as SortOption)}
-            className={CONTROL_CLASSES}
-          >
-            {SORT_OPTIONS.map((option) => (
-              <option key={option} value={option}>
-                {option}
-              </option>
-            ))}
-          </select>
-        </label>
+    <FilterBarSection
+      disabled={disabled}
+      disabledHint="Filters become available once integrations are added to this workspace."
+    >
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
+        <FilterBarSearch value={searchValue} placeholder="Search integrations" disabled={disabled} onChange={onSearchChange} />
+        <FilterBarSelect value={status} options={STATUS_FILTER_OPTIONS} ariaLabel="Status filter" disabled={disabled} onChange={onStatusChange} />
+        <FilterBarSelect value={templateType} options={TEMPLATE_FILTER_OPTIONS} ariaLabel="Template type filter" disabled={disabled} onChange={onTemplateTypeChange} />
+        <FilterBarSelect value={environment} options={ENVIRONMENT_FILTER_OPTIONS} ariaLabel="Environment filter" disabled={disabled} onChange={onEnvironmentChange} />
+        <FilterBarSelect value={sortBy} options={SORT_OPTIONS} ariaLabel="Sort integrations" disabled={disabled} onChange={onSortChange} />
       </div>
-      {disabled && (
-        <p className="mt-3 text-[12px] text-text-muted/60">
-          Filters become available once integrations are added to this workspace.
-        </p>
-      )}
-    </section>
+    </FilterBarSection>
   );
 }

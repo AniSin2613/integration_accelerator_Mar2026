@@ -9,7 +9,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_password}
       POSTGRES_DB: ${POSTGRES_DB:-cogniviti_bridge}
     ports:
-      - '5432:5432'
+      - '127.0.0.1:5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -36,6 +36,7 @@ services:
       # Auth stub secret — not a real secret, dev-only
       AUTH_STUB_SECRET: dev_stub_secret_not_for_production
       CAMEL_RUNNER_URL: http://camel-runner:8080
+      CAMEL_RUNNER_SECRET: ${CAMEL_RUNNER_SECRET:-dev_runner_secret}
       CORS_ORIGINS: http://localhost:3000
     ports:
       - '4000:4000'
@@ -57,7 +58,9 @@ services:
       - api
     environment:
       NODE_ENV: development
-      NEXT_PUBLIC_API_URL: http://localhost:4000
+      NEXT_PUBLIC_API_URL: /api
+      # Auth token injected server-side by middleware — not exposed to browser
+      AUTH_STUB_SECRET: dev_stub_secret_not_for_production
       # Inside Docker, web calls api service directly
       INTERNAL_API_URL: http://api:4000
     ports:
@@ -74,8 +77,9 @@ services:
     restart: unless-stopped
     environment:
       RUNNER_PORT: 8080
+      RUNNER_SHARED_SECRET: ${CAMEL_RUNNER_SECRET:-dev_runner_secret}
     ports:
-      - '8080:8080'
+      - '127.0.0.1:8080:8080'
     volumes:
       # Routes are written here by the API before execution
       - camel_routes:/app/routes

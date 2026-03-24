@@ -11,7 +11,7 @@ export function IntegrationsHeader() {
       </div>
 
       <Link
-        href="/templates"
+        href="/integrations/new/blank"
         className="h-10 px-4 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors inline-flex items-center justify-center shrink-0"
       >
         Create Integration

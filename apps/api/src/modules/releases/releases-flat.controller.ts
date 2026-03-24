@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ReleasesService } from './releases.service';
 import { SubmitApprovalDto } from './dto/submit-approval.dto';
 import { AuthGuard } from '../../common/guards/auth.guard';
+import { CurrentUser, RequestUser } from '../../common/decorators/current-user.decorator';
 
 @UseGuards(AuthGuard)
 @Controller('integrations/:integrationId/releases')
@@ -19,17 +20,17 @@ export class ReleasesFlatController {
   }
 
   @Post(':artifactId/submit')
-  submit(@Param('artifactId') artifactId: string, @Body() dto: SubmitApprovalDto) {
-    return this.service.submitForApproval(artifactId, 'stub-user', dto);
+  submit(@Param('artifactId') artifactId: string, @Body() dto: SubmitApprovalDto, @CurrentUser() user: RequestUser) {
+    return this.service.submitForApproval(artifactId, user.userId, dto);
   }
 
   @Post(':artifactId/approve')
-  approve(@Param('artifactId') artifactId: string) {
-    return this.service.approve(artifactId, 'stub-user');
+  approve(@Param('artifactId') artifactId: string, @CurrentUser() user: RequestUser) {
+    return this.service.approve(artifactId, user.userId);
   }
 
   @Post(':artifactId/promote-next')
-  promoteNext(@Param('artifactId') artifactId: string) {
-    return this.service.promoteNext(artifactId, 'stub-user');
+  promoteNext(@Param('artifactId') artifactId: string, @CurrentUser() user: RequestUser) {
+    return this.service.promoteNext(artifactId, user.userId);
   }
 }

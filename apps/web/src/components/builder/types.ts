@@ -1,0 +1,238 @@
+/* ------------------------------------------------------------------ */
+/*  Integration Builder – Types (Wireframe v5 enterprise studio)      */
+/* ------------------------------------------------------------------ */
+
+export const BUILDER_STEPS = [
+  'trigger',
+  'sourceGroup',
+  'mapping',
+  'validation',
+  'targetGroup',
+  'responseHandling',
+  'operations',
+] as const;
+
+export type BuilderStepId = (typeof BUILDER_STEPS)[number];
+
+export type StepStatus = 'not-started' | 'in-progress' | 'complete' | 'warning' | 'error';
+
+export interface StepMeta {
+  id: BuilderStepId;
+  label: string;
+  icon: string;
+  status: StepStatus;
+}
+
+export type TriggerType = 'Schedule / Cron' | 'Webhook' | 'Manual';
+
+export interface TriggerConfig {
+  triggerType: TriggerType;
+  cronExpression: string;
+  timezone: string;
+  webhookPath: string;
+  webhookMethod: 'POST' | 'PUT';
+  manualExecutionEnabled: boolean;
+  description: string;
+}
+
+export interface KeyValueEntry {
+  key: string;
+  value: string;
+}
+
+export interface SourceConfig {
+  connectionId: string;
+  connectionName: string;
+  connectionFamily: string;
+  healthStatus: string;
+  businessObject: string;
+  operation: string;
+  endpointPath: string;
+  queryParams: KeyValueEntry[];
+  customParams: KeyValueEntry[];
+  paginationEnabled: boolean;
+  paginationStrategy: 'Offset' | 'Cursor' | 'None';
+  pageSize: number;
+  incrementalReadMode: 'Off' | 'Timestamp Cursor';
+}
+
+export interface SourceEnrichment {
+  id: string;
+  connectionName: string;
+  interfaceName: string;
+  purpose: string;
+  strategy: 'Lookup' | 'Join' | 'Overlay';
+}
+
+export interface SourceGroupConfig {
+  primary: SourceConfig;
+  enrichmentSources: SourceEnrichment[];
+  processingPattern: 'Single Source' | 'Primary + Enrichment' | 'Split / Aggregate';
+}
+
+export interface MappingField {
+  id: string;
+  sourceField: string;
+  targetField: string;
+  transform: string;
+  required: boolean;
+  classification?: 'public' | 'internal' | 'confidential' | 'restricted';
+}
+
+export interface MappingConfig {
+  mappings: MappingField[];
+  unmappedSourceFields: string[];
+  unmappedTargetFields: string[];
+}
+
+export type ValidationSeverity = 'Error' | 'Warning' | 'Info';
+export type ValidationOnFailure = 'Reject Record' | 'Skip Record' | 'Flag & Continue';
+
+export interface ValidationRule {
+  id: string;
+  name: string;
+  condition: string;
+  severity: ValidationSeverity;
+  onFailure: ValidationOnFailure;
+  enabled: boolean;
+}
+
+export interface ValidationConfig {
+  rules: ValidationRule[];
+  policyMode: 'Balanced' | 'Strict' | 'Lenient';
+}
+
+export type WriteMode = 'Create' | 'Upsert' | 'Update';
+
+export interface TargetConfig {
+  connectionId: string;
+  connectionName: string;
+  connectionFamily: string;
+  healthStatus: string;
+  businessObject: string;
+  operation: string;
+  endpointPath: string;
+  writeMode: WriteMode;
+  upsertKeyField: string;
+  batchSize: number;
+  params: KeyValueEntry[];
+  conflictHandling: 'Overwrite' | 'Skip Existing' | 'Fail on Conflict';
+}
+
+export interface TargetDestination extends TargetConfig {
+  id: string;
+  name: string;
+  priority: number;
+}
+
+export interface TargetGroupConfig {
+  targets: TargetDestination[];
+  deliveryPattern: 'Single Target' | 'Fan-out to Multiple Targets' | 'Scatter-Gather';
+}
+
+export interface ResponseHandlingConfig {
+  successPolicy: '2xx only' | '2xx + business ack';
+  errorPolicy: 'Normalize & Route' | 'Pass-through';
+  callbackEnabled: boolean;
+  callbackDestination: string;
+  callbackMethod: 'POST' | 'PUT';
+  businessResponseMappingEnabled: boolean;
+  partialSuccessPolicy: 'All-or-nothing' | 'Partial success allowed' | 'Compensate failed targets';
+}
+
+export type AlertChannel = 'Email' | 'Slack' | 'Webhook' | 'None';
+
+export interface MonitoringConfig {
+  alertChannel: AlertChannel;
+  alertDestination: string;
+  errorThresholdPercent: number;
+  enableRetry: boolean;
+  maxRetries: number;
+  retryDelayMs: number;
+  deadLetterEnabled: boolean;
+  deadLetterTopic: string;
+  telemetryMode: 'Standard' | 'Enhanced';
+  diagnosticsLevel: 'Basic' | 'Detailed';
+  traceRetentionDays: number;
+}
+
+export interface BuilderState {
+  integrationId: string;
+  integrationName: string;
+  templateLabel: string;
+  versionLabel: string;
+  validationStatus: 'Not validated' | 'Valid' | 'Warnings';
+  environment: 'Dev' | 'Test' | 'Prod';
+  activeStep: BuilderStepId;
+  steps: StepMeta[];
+  trigger: TriggerConfig;
+  sourceGroup: SourceGroupConfig;
+  mapping: MappingConfig;
+  validation: ValidationConfig;
+  targetGroup: TargetGroupConfig;
+  responseHandling: ResponseHandlingConfig;
+  operations: MonitoringConfig;
+  isDirty: boolean;
+  isSaving: boolean;
+  lastSavedAt: string | null;
+  selectedMappingId: string | null;
+  selectedRuleId: string | null;
+}
+
+export type SourceTargetWarning = 'none' | 'warn' | 'block';
+
+export function getSourceTargetWarning(state: BuilderState): SourceTargetWarning {
+  const source = state.sourceGroup.primary;
+  const target = state.targetGroup.targets[0];
+  if (!source.connectionId || !target?.connectionId) return 'none';
+  if (source.connectionId !== target.connectionId) return 'none';
+  if (
+    source.endpointPath === target.endpointPath &&
+    source.operation === target.operation &&
+    source.businessObject === target.businessObject
+  ) {
+    return 'block';
+  }
+  return 'warn';
+}
+
+export function isTriggerComplete(t: TriggerConfig): boolean {
+  if (t.triggerType === 'Schedule / Cron') return t.cronExpression.trim().length > 0;
+  if (t.triggerType === 'Webhook') return t.webhookPath.trim().length > 0;
+  return t.manualExecutionEnabled;
+}
+
+export function isSourceComplete(s: SourceGroupConfig): boolean {
+  const p = s.primary;
+  const primaryReady = p.connectionId !== '' && p.businessObject.trim() !== '' && p.endpointPath.trim() !== '';
+  if (!primaryReady) return false;
+  if (s.processingPattern === 'Primary + Enrichment') return s.enrichmentSources.length > 0;
+  return true;
+}
+
+export function isMappingComplete(m: MappingConfig): boolean {
+  return m.mappings.length > 0 && m.unmappedTargetFields.length === 0;
+}
+
+export function isValidationComplete(v: ValidationConfig): boolean {
+  return v.rules.length > 0;
+}
+
+export function isTargetComplete(t: TargetGroupConfig): boolean {
+  if (t.targets.length === 0) return false;
+  const primary = t.targets[0];
+  const primaryReady = primary.connectionId !== '' && primary.businessObject.trim() !== '' && primary.endpointPath.trim() !== '';
+  if (!primaryReady) return false;
+  if (t.deliveryPattern === 'Fan-out to Multiple Targets') return t.targets.length > 1;
+  return true;
+}
+
+export function isResponseHandlingComplete(r: ResponseHandlingConfig): boolean {
+  if (!r.businessResponseMappingEnabled) return false;
+  if (r.callbackEnabled && r.callbackDestination.trim() === '') return false;
+  return true;
+}
+
+export function isMonitoringComplete(m: MonitoringConfig): boolean {
+  return m.alertChannel !== 'None' || m.enableRetry || m.deadLetterEnabled;
+}
