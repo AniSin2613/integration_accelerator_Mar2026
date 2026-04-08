@@ -1,13 +1,13 @@
 import { type BuilderState, type StepMeta, type TargetDestination } from './types';
 
 export const DEFAULT_STEPS: StepMeta[] = [
-  { id: 'trigger', label: 'Trigger', icon: 'bolt', status: 'not-started' },
-  { id: 'sourceGroup', label: 'Sources', icon: 'cloud_download', status: 'not-started' },
-  { id: 'mapping', label: 'Mapping', icon: 'schema', status: 'not-started' },
-  { id: 'validation', label: 'Validation', icon: 'rule', status: 'not-started' },
-  { id: 'targetGroup', label: 'Targets', icon: 'cloud_upload', status: 'not-started' },
-  { id: 'responseHandling', label: 'Responses', icon: 'reply', status: 'not-started' },
-  { id: 'operations', label: 'Ops', icon: 'monitoring', status: 'not-started' },
+  { id: 'trigger', label: 'Trigger', nodeKey: 'trigger', status: 'not-started' },
+  { id: 'sourceGroup', label: 'Sources', nodeKey: 'sourceGroup', status: 'not-started' },
+  { id: 'mapping', label: 'Mapping', nodeKey: 'mapping', status: 'not-started' },
+  { id: 'validation', label: 'Validation', nodeKey: 'validation', status: 'not-started' },
+  { id: 'targetGroup', label: 'Targets', nodeKey: 'targetGroup', status: 'not-started' },
+  { id: 'responseHandling', label: 'Responses', nodeKey: 'responseHandling', status: 'not-started' },
+  { id: 'operations', label: 'Ops', nodeKey: 'operations', status: 'not-started' },
 ];
 
 export function createBlankBuilderState(integrationId: string, name: string): BuilderState {
@@ -39,6 +39,7 @@ export function createBlankBuilderState(integrationId: string, name: string): Bu
         operation: 'GET',
         endpointPath: '',
         queryParams: [],
+        headers: [],
         customParams: [],
         paginationEnabled: false,
         paginationStrategy: 'None',
@@ -49,8 +50,8 @@ export function createBlankBuilderState(integrationId: string, name: string): Bu
       processingPattern: 'Single Source',
     },
     mapping: { mappings: [], unmappedSourceFields: [], unmappedTargetFields: [] },
-    validation: { rules: [], policyMode: 'Balanced' },
-    targetGroup: { targets: [], deliveryPattern: 'Single Target' },
+    validation: { rules: [], policyMode: 'Balanced', errorConfig: { logEnabled: true, dlqEnabled: false, dlqTopic: '', notifyChannel: 'None', notifyRecipients: '', includeRecordData: false } },
+    targetGroup: { targets: [], deliveryPattern: 'Single Target', targetProfileState: null },
     responseHandling: {
       successPolicy: '2xx only',
       errorPolicy: 'Normalize & Route',
@@ -109,13 +110,13 @@ export function createDemoBuilderState(integrationId: string): BuilderState {
     environment: 'Dev',
     activeStep: 'trigger',
     steps: [
-      { id: 'trigger', label: 'Trigger', icon: 'bolt', status: 'complete' },
-      { id: 'sourceGroup', label: 'Sources', icon: 'cloud_download', status: 'complete' },
-      { id: 'mapping', label: 'Mapping', icon: 'schema', status: 'warning' },
-      { id: 'validation', label: 'Validation', icon: 'rule', status: 'in-progress' },
-      { id: 'targetGroup', label: 'Targets', icon: 'cloud_upload', status: 'complete' },
-      { id: 'responseHandling', label: 'Responses', icon: 'reply', status: 'warning' },
-      { id: 'operations', label: 'Ops', icon: 'monitoring', status: 'in-progress' },
+      { id: 'trigger', label: 'Trigger', nodeKey: 'trigger', status: 'complete' },
+      { id: 'sourceGroup', label: 'Sources', nodeKey: 'sourceGroup', status: 'complete' },
+      { id: 'mapping', label: 'Mapping', nodeKey: 'mapping', status: 'warning' },
+      { id: 'validation', label: 'Validation', nodeKey: 'validation', status: 'in-progress' },
+      { id: 'targetGroup', label: 'Targets', nodeKey: 'targetGroup', status: 'complete' },
+      { id: 'responseHandling', label: 'Responses', nodeKey: 'responseHandling', status: 'warning' },
+      { id: 'operations', label: 'Ops', nodeKey: 'operations', status: 'in-progress' },
     ],
     trigger: {
       triggerType: 'Schedule / Cron',
@@ -136,6 +137,10 @@ export function createDemoBuilderState(integrationId: string): BuilderState {
         operation: 'GET',
         endpointPath: '/api/invoices',
         queryParams: [{ key: 'status', value: 'approved' }],
+        headers: [
+          { key: 'Accept', value: 'application/json' },
+          { key: 'Content-Type', value: 'application/json' },
+        ],
         customParams: [{ key: 'includeTax', value: 'true' }],
         paginationEnabled: true,
         paginationStrategy: 'Offset',
@@ -149,25 +154,27 @@ export function createDemoBuilderState(integrationId: string): BuilderState {
     },
     mapping: {
       mappings: [
-        { id: 'm1', sourceField: 'invoice_number', targetField: 'canonical.invoice.id', transform: 'direct', required: true, classification: 'internal' },
-        { id: 'm2', sourceField: 'vendor_name', targetField: 'canonical.vendor.name', transform: 'lookup', required: true, classification: 'confidential' },
-        { id: 'm3', sourceField: 'total_amount', targetField: 'canonical.amount.total', transform: 'direct', required: true, classification: 'internal' },
-        { id: 'm4', sourceField: 'currency', targetField: 'canonical.amount.currency', transform: 'direct', required: true, classification: 'public' },
-        { id: 'm5', sourceField: 'invoice_date', targetField: 'canonical.invoice.date', transform: 'dateFormat(YYYY-MM-DD)', required: true, classification: 'internal' },
+        { id: 'm1', sourceField: 'invoice_number', targetField: 'canonical.invoice.id', transform: 'direct', required: true, classification: 'internal', transformConfig: '' },
+        { id: 'm2', sourceField: 'vendor_name', targetField: 'canonical.vendor.name', transform: 'lookup', required: true, classification: 'confidential', transformConfig: 'vendor_lookup_table' },
+        { id: 'm3', sourceField: 'total_amount', targetField: 'canonical.amount.total', transform: 'direct', required: true, classification: 'internal', transformConfig: '' },
+        { id: 'm4', sourceField: 'currency', targetField: 'canonical.amount.currency', transform: 'direct', required: true, classification: 'public', transformConfig: '' },
+        { id: 'm5', sourceField: 'invoice_date', targetField: 'canonical.invoice.date', transform: 'dateFormat(YYYY-MM-DD)', required: true, classification: 'internal', transformConfig: 'YYYY-MM-DD' },
       ],
       unmappedSourceFields: ['attachments', 'custom_field_1'],
       unmappedTargetFields: ['canonical.company.code', 'canonical.business.area'],
     },
     validation: {
       rules: [
-        { id: 'vr1', name: 'Amount must be positive', condition: 'record.canonical.amount.total > 0', severity: 'Error', onFailure: 'Reject Record', enabled: true },
-        { id: 'vr2', name: 'Vendor must exist', condition: 'record.canonical.vendor.name != null', severity: 'Warning', onFailure: 'Flag & Continue', enabled: true },
+        { id: 'vr1', name: 'Amount must be positive', field: 'canonical.amount.total', operator: 'GREATER_THAN', value: '0', severity: 'Error', enabled: true, source: 'manual' },
+        { id: 'vr2', name: 'Vendor must exist', field: 'canonical.vendor.name', operator: 'IS_NOT_EMPTY', value: '', severity: 'Warning', enabled: true, source: 'manual' },
       ],
       policyMode: 'Balanced',
+      errorConfig: { logEnabled: true, dlqEnabled: false, dlqTopic: '', notifyChannel: 'None', notifyRecipients: '', includeRecordData: false },
     },
     targetGroup: {
       targets: [primaryTarget],
       deliveryPattern: 'Single Target',
+      targetProfileState: null,
     },
     responseHandling: {
       successPolicy: '2xx + business ack',

@@ -45,7 +45,9 @@ export interface IntegrationListRow {
   lastUpdated: string;
   lastUpdatedMinutes: number;
   owner: string;
-  href: string;
+  reviewHref: string;
+  builderHref: string;
+  releasesHref: string;
 }
 
 export interface IntegrationsPageData {

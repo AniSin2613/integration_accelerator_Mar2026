@@ -1,3 +1,5 @@
+import { type WorkflowNodeKey } from '@/lib/workflow-node-icons';
+
 export const INTEGRATION_OVERVIEW_VIEW_STATES = ['loading', 'draft', 'demo'] as const;
 
 export type IntegrationOverviewViewState = (typeof INTEGRATION_OVERVIEW_VIEW_STATES)[number];
@@ -49,9 +51,10 @@ export interface HighlightCard {
 
 export interface WorkflowBlock {
   id: string;
+  nodeKey: WorkflowNodeKey;
   title: string;
   subtitle: string;
-  icon: string;
+  icon?: string;
   detailRows: Array<{
     label: string;
     value: string;

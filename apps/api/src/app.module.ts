@@ -16,6 +16,12 @@ import { RunsModule } from './modules/runs/runs.module';
 import { AuditModule } from './modules/audit/audit.module';
 import { CamelModule } from './modules/camel/camel.module';
 import { IntegrationsModule } from './modules/integrations/integrations.module';
+import { TargetProfilesModule } from './modules/target-profiles/target-profiles.module';
+import { SchemaPacksModule } from './modules/schema-packs/schema-packs.module';
+import { ProfilesModule } from './modules/profiles/profiles.module';
+import { DemoTargetsModule } from './modules/demo-targets/demo-targets.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { CopilotModule } from './modules/copilot/copilot.module';
 
 @Module({
   imports: [
@@ -35,6 +41,12 @@ import { IntegrationsModule } from './modules/integrations/integrations.module';
     AuditModule,
     CamelModule,
     IntegrationsModule,
+    TargetProfilesModule,
+    SchemaPacksModule,
+    ProfilesModule,
+    DemoTargetsModule,
+    DashboardModule,
+    CopilotModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -3,6 +3,7 @@
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { getTemplatesPageData } from './mockData';
 import { TemplateGroupSection } from './TemplateGroupSection';
+import { api } from '@/lib/api-client';
 import { TemplatesEmptyFilteredState } from './TemplatesEmptyFilteredState';
 import { TemplatesFilterBar } from './TemplatesFilterBar';
 import { TemplatesHeader } from './TemplatesHeader';
@@ -24,6 +25,8 @@ interface TemplatesPageProps {
 
 const SOURCE_OPTION_ORDER: Exclude<TemplateSourceFilter, 'All Sources'>[] = ['Coupa', 'GEP', 'REST API', 'File', 'DB', 'S3'];
 const TARGET_OPTION_ORDER: Exclude<TemplateTargetFilter, 'All Targets'>[] = [
+  'Demo JSON',
+  'Demo XML',
   'SAP',
   'Dynamics',
   'ERP',
@@ -77,19 +80,82 @@ export function TemplatesPage({ viewState }: TemplatesPageProps) {
   const [target, setTarget] = useState<TemplateTargetFilter>('All Targets');
   const [useCase, setUseCase] = useState<TemplateUseCaseFilter>('All Use Cases');
   const [sortBy, setSortBy] = useState<TemplateSortOption>('Recommended');
+  const [apiTemplates, setApiTemplates] = useState<TemplateItem[] | null>(null);
+  const [apiLoading, setApiLoading] = useState(true);
 
   const deferredSearchValue = useDeferredValue(searchValue.trim().toLowerCase());
 
-  if (viewState === 'loading') {
-    return (
-      <div className="space-y-6">
-        <TemplatesHeader />
-        <TemplatesSkeleton />
-      </div>
-    );
-  }
+  // Fetch templates from API on mount
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get<any[]>('/templates')
+      .then((rows) => {
+        if (cancelled) return;
+        const mapped: TemplateItem[] = rows.map((t) => {
+          const latestVersion = t.versions?.[0];
+          const isPrebuilt = t.class === 'CERTIFIED';
+          const srcSystem = (t.sourceSystem ?? 'REST API') as TemplateItem['source'];
+          const tgtSystem = (t.targetSystem ?? 'REST API') as TemplateItem['target'];
+          const bo = (t.businessObject ?? 'API Payload').replace(/_/g, ' ');
+          const useCaseLabel = bo.includes('INVOICE') ? 'Invoices'
+            : bo.includes('PURCHASE_ORDER') || bo.includes('Purchase Order') ? 'Purchase Orders'
+            : bo.includes('VENDOR') ? 'Vendor Sync'
+            : `${srcSystem} to ${tgtSystem}`;
+          return {
+            id: t.id,
+            name: t.name,
+            group: isPrebuilt ? 'Prebuilt' : 'Generic',
+            categoryLabel: isPrebuilt ? 'Prebuilt Template' : 'Generic Template',
+            templateTypeTag: isPrebuilt ? 'Business Accelerator' : 'Technical Starter',
+            description: t.description ?? '',
+            source: srcSystem,
+            target: tgtSystem,
+            useCase: useCaseLabel as TemplateItem['useCase'],
+            objectType: bo,
+            version: latestVersion?.version ?? 'v1.0',
+            lastUpdated: latestVersion?.publishedAt
+              ? new Date(latestVersion.publishedAt).toLocaleDateString()
+              : 'Recently',
+            updatedDaysAgo: latestVersion?.publishedAt
+              ? Math.max(0, Math.floor((Date.now() - new Date(latestVersion.publishedAt).getTime()) / 86400000))
+              : 0,
+            usageCount: 0,
+            isPublished: true,
+            visibilityScope: 'global' as const,
+            audienceTags: ['general' as const],
+            allowedTenants: [],
+            allowedDemoProfiles: ['generic_enterprise_demo' as const],
+          };
+        });
+        setApiTemplates(mapped);
+        setApiLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          // Fallback to mock data if API is unavailable
+          setApiTemplates(null);
+          setApiLoading(false);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
 
-  const data = getTemplatesPageData(viewState);
+  // Use API data if available, otherwise fall back to mock data
+  const data = useMemo(() => {
+    if (apiTemplates) {
+      return {
+        summary: {
+          total: apiTemplates.length,
+          prebuilt: apiTemplates.filter((t) => t.group === 'Prebuilt').length,
+          generic: apiTemplates.filter((t) => t.group === 'Generic').length,
+          recentlyUpdated: apiTemplates.filter((t) => t.updatedDaysAgo <= 7).length,
+        },
+        templates: apiTemplates,
+      };
+    }
+    return getTemplatesPageData(viewState);
+  }, [apiTemplates, viewState]);
 
   const categoryOptions = useMemo<TemplateCategoryFilter[]>(() => {
     const options: TemplateCategoryFilter[] = ['All'];
@@ -168,11 +234,6 @@ export function TemplatesPage({ viewState }: TemplatesPageProps) {
     sortBy,
   );
 
-  const prebuiltTemplates = filteredTemplates.filter((template) => template.group === 'Prebuilt');
-  const genericTemplates = filteredTemplates.filter((template) => template.group === 'Generic');
-  const hasNoTemplates = data.templates.length === 0 || viewState === 'no-templates';
-  const isFilteredEmpty = !hasNoTemplates && (viewState === 'empty' || filteredTemplates.length === 0);
-
   const clearFilters = () => {
     setSearchValue('');
     setCategory('All');
@@ -181,6 +242,20 @@ export function TemplatesPage({ viewState }: TemplatesPageProps) {
     setUseCase('All Use Cases');
     setSortBy('Recommended');
   };
+
+  if (apiLoading || viewState === 'loading') {
+    return (
+      <div className="space-y-6">
+        <TemplatesHeader />
+        <TemplatesSkeleton />
+      </div>
+    );
+  }
+
+  const prebuiltTemplates = filteredTemplates.filter((template) => template.group === 'Prebuilt');
+  const genericTemplates = filteredTemplates.filter((template) => template.group === 'Generic');
+  const hasNoTemplates = data.templates.length === 0 || viewState === 'no-templates';
+  const isFilteredEmpty = !hasNoTemplates && (viewState === 'empty' || filteredTemplates.length === 0);
 
   return (
     <div className="space-y-6">

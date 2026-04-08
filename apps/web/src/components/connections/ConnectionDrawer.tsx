@@ -28,6 +28,17 @@ interface ConnectionDrawerProps {
   onDeleted: () => void;
 }
 
+function normalizeConfigForSubmit(config: ConnectionConfig, platformLabel?: string): ConnectionConfig {
+  const normalized = { ...config, platformLabel: platformLabel?.trim() || undefined } as ConnectionConfig;
+
+  // Backend requires API key placement when API Key auth is selected.
+  if (normalized.family === 'REST / OpenAPI outbound' && normalized.authMethod === 'API Key') {
+    normalized.apiKeyPlacement = normalized.apiKeyPlacement ?? 'Header';
+  }
+
+  return normalized;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main component                                                     */
 /* ------------------------------------------------------------------ */
@@ -59,7 +70,6 @@ export function ConnectionDrawer({ isOpen, connectionId, onClose, onSaved, onDel
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setTestResult(null);
     api
       .get<ConnectionDetail>(`/connections/${connectionId}`)
       .then((data) => {
@@ -67,6 +77,21 @@ export function ConnectionDrawer({ isOpen, connectionId, onClose, onSaved, onDel
         setDetail(data);
         setMode('view');
         populateDraft(data);
+        // Seed banner from last test history so result persists across drawer open/close
+        if (data.testHistory.length > 0) {
+          const latest = data.testHistory[0];
+          setTestResult({
+            connectionId: data.id,
+            environmentId: '',
+            status: latest.status,
+            testedAt: latest.testedAt,
+            summaryMessage: latest.summaryMessage,
+            latencyMs: null,
+            details: {},
+          });
+        } else {
+          setTestResult(null);
+        }
       })
       .catch((err) => {
         if (cancelled) return;
@@ -93,13 +118,11 @@ export function ConnectionDrawer({ isOpen, connectionId, onClose, onSaved, onDel
     if (detail) populateDraft(detail);
     setMode('edit');
     setError(null);
-    setTestResult(null);
   }, [detail, populateDraft]);
 
   const cancelEdit = useCallback(() => {
     setMode('view');
     setError(null);
-    setTestResult(null);
   }, []);
 
   const handleSave = useCallback(async () => {
@@ -107,11 +130,12 @@ export function ConnectionDrawer({ isOpen, connectionId, onClose, onSaved, onDel
     setSaving(true);
     setError(null);
     try {
+      const normalizedConfig = normalizeConfigForSubmit(draftConfig, draftPlatformLabel);
       await api.patch(`/connections/${connectionId}`, {
         name: draftName.trim(),
         family: FAMILY_TO_ENUM[draftFamily],
         platformLabel: draftPlatformLabel.trim() || undefined,
-        config: { ...draftConfig, platformLabel: draftPlatformLabel.trim() || undefined },
+        config: normalizedConfig,
       });
       // Reload detail
       const updated = await api.get<ConnectionDetail>(`/connections/${connectionId}`);
@@ -443,11 +467,31 @@ export function ConnectionDrawer({ isOpen, connectionId, onClose, onSaved, onDel
 
 function TestResultBanner({ result }: { result: ConnectionTestResult }) {
   const isOk = result.status === 'healthy' || result.status === 'ok';
-  const variant = isOk ? 'border-success/30 bg-success/5 text-success' : 'border-danger/30 bg-danger/5 text-danger';
+  const isWarning = result.status === 'warning';
+  const variant = isOk
+    ? 'border-success/30 bg-success/5 text-success'
+    : isWarning
+      ? 'border-amber-300/60 bg-amber-50 text-amber-700'
+      : 'border-danger/30 bg-danger/5 text-danger';
+  const testUrl = result.details?.testUrl as string | undefined;
+  const baseUrl = result.details?.baseUrl as string | undefined;
+  const testMethod = result.details?.testMethod as string | undefined;
+  const httpStatus = result.details?.httpStatus as number | undefined;
+  const noTestPath = !isOk && testUrl && baseUrl && testUrl.replace(/\/+$/, '') === baseUrl.replace(/\/+$/, '');
   return (
     <div className={`rounded-lg border px-4 py-3 text-sm ${variant}`}>
-      <p className="font-semibold">{isOk ? 'Connection test passed' : 'Connection test failed'}</p>
+      <p className="font-semibold">{isOk ? 'Connection test passed' : isWarning ? 'Connection test warning' : 'Connection test failed'}</p>
       <p className="mt-1 text-text-muted">{result.summaryMessage}</p>
+      {testUrl && (
+        <p className="mt-1 font-mono text-xs text-text-muted/70 break-all">
+          {testMethod ?? 'GET'} {testUrl}{httpStatus != null ? ` \u2192 ${httpStatus}` : ''}
+        </p>
+      )}
+      {noTestPath && (
+        <p className="mt-1 text-xs font-medium text-amber-600">
+          Tip: No Test Path is configured — the test hit the bare Base URL. Add a Test Path (e.g. /api/status) in Edit mode.
+        </p>
+      )}
       {result.latencyMs != null && (
         <p className="mt-1 text-text-muted/70 text-xs">Latency: {result.latencyMs}ms</p>
       )}

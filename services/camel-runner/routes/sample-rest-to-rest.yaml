@@ -12,13 +12,12 @@
 #   TARGET_BASE_URL  - base URL of the target REST service
 #   TARGET_PATH      - path on the target (default: /api/receive)
 
-- route:
+- from:
+    uri: "platform-http:/api/invoke"
+    parameters:
+      httpMethodRestrict: POST
     id: rest-to-rest-passthrough
     description: "Cogniviti Bridge – REST to REST passthrough (starter template)"
-    from:
-      uri: "platform-http:/api/invoke"
-      parameters:
-        httpMethodRestrict: POST
     steps:
       - log:
           message: "Received payload: ${body}"

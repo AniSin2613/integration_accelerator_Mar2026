@@ -1,11 +1,11 @@
-import Link from 'next/link';
-import { getTemplatesPageData } from '@/components/templates/mockData';
+'use client';
 
-interface TemplateCreateEntryRouteProps {
-  searchParams?: {
-    templateId?: string;
-  };
-}
+import { Suspense, useState } from 'react';
+import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { api } from '@/lib/api-client';
+import { getTemplatesPageData } from '@/components/templates/mockData';
+import { DEFAULT_WORKSPACE_SLUG } from '@/lib/workspace';
 
 function getTemplateIncludes(templateName: string, objectType: string): string[] {
   return [
@@ -15,10 +15,36 @@ function getTemplateIncludes(templateName: string, objectType: string): string[]
   ];
 }
 
-export default function TemplateCreateEntryRoute({ searchParams }: TemplateCreateEntryRouteProps) {
-  const templateId = searchParams?.templateId;
+function TemplateCreateContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const templateId = searchParams.get('templateId') ?? undefined;
+
   const templates = getTemplatesPageData('demo').templates;
   const selectedTemplate = templateId ? templates.find((template) => template.id === templateId) : undefined;
+
+  const [integrationName, setIntegrationName] = useState(
+    selectedTemplate ? `${selectedTemplate.name} Integration` : '',
+  );
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreateDraft = async () => {
+    if (!selectedTemplate || !integrationName.trim()) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const result = await api.post<{ id: string }>('/integrations', {
+        workspaceSlug: DEFAULT_WORKSPACE_SLUG,
+        templateDefId: selectedTemplate.id,
+        name: integrationName.trim(),
+      });
+      router.push(`/integrations/${result.id}/builder`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create integration draft');
+      setCreating(false);
+    }
+  };
 
   if (!selectedTemplate) {
     return (
@@ -52,10 +78,10 @@ export default function TemplateCreateEntryRoute({ searchParams }: TemplateCreat
     <div className="space-y-5">
       <header>
         <h1 className="text-[28px] sm:text-[32px] font-bold tracking-[-0.02em] text-text-main leading-tight">
-          Template-Based Create Entry
+          Start from Template
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-text-muted">
-          Start from a selected template with predefined workflow structure and mapping guidance.
+          Create a new integration draft from a selected template with predefined workflow structure and mapping guidance.
         </p>
       </header>
 
@@ -86,20 +112,45 @@ export default function TemplateCreateEntryRoute({ searchParams }: TemplateCreat
           </ul>
         </div>
 
-        <div className="mt-3 rounded-lg border border-border-soft bg-surface p-4">
-          <p className="text-sm font-semibold text-text-main">Prerequisites and notes</p>
-          <ul className="mt-2 space-y-1 text-sm text-text-muted">
-            <li>- Verify source and target credentials are available for this workspace environment.</li>
-            <li>- Confirm required {selectedTemplate.objectType.toLowerCase()} fields before finalizing mappings.</li>
-          </ul>
+        {/* Integration name input */}
+        <div className="mt-4">
+          <label htmlFor="integration-name" className="block text-sm font-medium text-text-main">
+            Integration Name
+          </label>
+          <input
+            id="integration-name"
+            type="text"
+            value={integrationName}
+            onChange={(e) => setIntegrationName(e.target.value)}
+            placeholder="e.g. Coupa to SAP Invoice Sync - ACME"
+            className="mt-1 w-full rounded-lg border border-border-soft bg-surface px-3 py-2 text-sm text-text-main placeholder:text-text-muted/50 focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary/30"
+          />
         </div>
+
+        {error && (
+          <div className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+            {error}
+          </div>
+        )}
 
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <button
             type="button"
-            className="inline-flex h-9 items-center justify-center rounded-lg bg-primary px-3.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90"
+            onClick={handleCreateDraft}
+            disabled={creating || !integrationName.trim()}
+            className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg bg-primary px-3.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Start from Template
+            {creating ? (
+              <>
+                <span className="material-symbols-outlined text-[14px] animate-spin">progress_activity</span>
+                Creating Draft…
+              </>
+            ) : (
+              <>
+                <span className="material-symbols-outlined text-[14px]">add_circle</span>
+                Create Integration Draft
+              </>
+            )}
           </button>
           <Link
             href="/templates"
@@ -110,5 +161,13 @@ export default function TemplateCreateEntryRoute({ searchParams }: TemplateCreat
         </div>
       </section>
     </div>
+  );
+}
+
+export default function TemplateCreateEntryRoute() {
+  return (
+    <Suspense fallback={null}>
+      <TemplateCreateContent />
+    </Suspense>
   );
 }

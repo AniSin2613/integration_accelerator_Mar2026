@@ -1,6 +1,6 @@
 'use client';
 
-import { TextField, SelectField, TextAreaField } from '@/components/ui/FormFields';
+import { TextField, SelectField, TextAreaField, WORKBENCH_OPTION_ACTIVE, WORKBENCH_OPTION_BASE, WORKBENCH_OPTION_INACTIVE } from '@/components/ui/FormFields';
 import { WorkbenchSection } from '@/components/ui/BuilderWorkbench';
 import { type TriggerConfig, type TriggerType } from '../types';
 
@@ -22,22 +22,22 @@ export function TriggerWorkbench({ config, onChange }: TriggerWorkbenchProps) {
   return (
     <div className="p-4 space-y-5 pb-6">
       <WorkbenchSection label="Trigger Type">
-        <div className="flex gap-2">
+        <div className="grid grid-cols-3 gap-3">
           {TRIGGER_TYPES.map((t) => (
             <button
               key={t}
               type="button"
               onClick={() => set('triggerType', t)}
-              className={`flex items-center gap-2 rounded-lg border px-4 py-2.5 text-[13px] font-medium transition-all ${
+              className={`flex flex-col ${WORKBENCH_OPTION_BASE} ${
                 config.triggerType === t
-                  ? 'border-primary bg-primary/5 text-primary ring-1 ring-primary/15'
-                  : 'border-border-soft bg-surface text-text-main hover:border-primary/30'
+                  ? WORKBENCH_OPTION_ACTIVE
+                  : WORKBENCH_OPTION_INACTIVE
               }`}
             >
-              <span className="material-symbols-outlined text-[16px]">
+              <span className="material-symbols-outlined text-[18px]">
                 {t === 'Schedule / Cron' ? 'schedule' : t === 'Webhook' ? 'webhook' : 'touch_app'}
               </span>
-              {t}
+              <span className="text-center leading-tight">{t}</span>
             </button>
           ))}
         </div>

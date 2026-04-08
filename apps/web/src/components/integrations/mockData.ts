@@ -31,7 +31,9 @@ const demoIntegrationsData: IntegrationsPageData = {
       lastUpdated: '1 hour ago',
       lastUpdatedMinutes: 60,
       owner: 'AP Team',
-      href: '/integrations/coupa-invoice-to-sap/designer',
+      reviewHref: '/integrations/coupa-invoice-to-sap',
+      builderHref: '/integrations/coupa-invoice-to-sap/builder',
+      releasesHref: '/integrations/coupa-invoice-to-sap/releases',
     },
     {
       id: 'rest-order-sync',
@@ -44,7 +46,9 @@ const demoIntegrationsData: IntegrationsPageData = {
       lastUpdated: '3 hours ago',
       lastUpdatedMinutes: 180,
       owner: 'Integration Team',
-      href: '/integrations/rest-order-sync/designer',
+      reviewHref: '/integrations/rest-order-sync',
+      builderHref: '/integrations/rest-order-sync/builder',
+      releasesHref: '/integrations/rest-order-sync/releases',
     },
     {
       id: 'vendor-master-sync',
@@ -57,7 +61,9 @@ const demoIntegrationsData: IntegrationsPageData = {
       lastUpdated: '25 min ago',
       lastUpdatedMinutes: 25,
       owner: 'Procurement Ops',
-      href: '/integrations/vendor-master-sync/designer',
+      reviewHref: '/integrations/vendor-master-sync',
+      builderHref: '/integrations/vendor-master-sync/builder',
+      releasesHref: '/integrations/vendor-master-sync/releases',
     },
     {
       id: 'payment-status-sync',
@@ -70,7 +76,9 @@ const demoIntegrationsData: IntegrationsPageData = {
       lastUpdated: '2 hours ago',
       lastUpdatedMinutes: 120,
       owner: 'Finance Ops',
-      href: '/integrations/payment-status-sync/designer',
+      reviewHref: '/integrations/payment-status-sync',
+      builderHref: '/integrations/payment-status-sync/builder',
+      releasesHref: '/integrations/payment-status-sync/releases',
     },
   ],
 };

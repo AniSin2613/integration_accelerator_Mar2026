@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { GlobalSearchModal } from './GlobalSearchModal';
+import { NotificationsDropdown } from './NotificationsDropdown';
+import { WorkspaceSelector } from './WorkspaceSelector';
 
 interface TopbarProps {
   onOpenSidebar: () => void;
@@ -22,7 +25,7 @@ const ENV_SELECT_CLASS: Record<TopbarEnvironment, string> = {
 };
 
 export function Topbar({ onOpenSidebar }: TopbarProps) {
-  const [isSearchHintStatic, setIsSearchHintStatic] = useState(false);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [selectedEnvironment, setSelectedEnvironment] = useState<TopbarEnvironment>('Dev');
   const router = useRouter();
   const pathname = usePathname();
@@ -37,6 +40,18 @@ export function Topbar({ onOpenSidebar }: TopbarProps) {
     syncEnvironmentFromUrl();
     window.addEventListener('popstate', syncEnvironmentFromUrl);
     return () => window.removeEventListener('popstate', syncEnvironmentFromUrl);
+  }, []);
+
+  // ⌘K to open global search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setIsSearchOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   const handleEnvironmentChange = (nextEnvironment: TopbarEnvironment) => {
@@ -74,33 +89,17 @@ export function Topbar({ onOpenSidebar }: TopbarProps) {
           <span className="text-[15px] font-bold tracking-[-0.015em]">Cogniviti Bridge</span>
         </Link>
 
+        <WorkspaceSelector />
+
         <button
           type="button"
-          className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-border-soft text-[12px] text-text-muted font-medium transition-colors hover:bg-slate-100 hover:border-slate-300"
-          aria-label="Switch workspace"
-          aria-haspopup="listbox"
-        >
-          <span className="material-symbols-outlined text-[16px]">workspaces</span>
-          Default Workspace
-          <span className="material-symbols-outlined text-[14px] opacity-50">expand_more</span>
-        </button>
-
-        <div
-          role="search"
-          aria-label="Global search"
+          onClick={() => setIsSearchOpen(true)}
           className="hidden xl:flex items-center h-9 w-[260px] rounded-lg border border-border-soft bg-background-light px-3 text-text-muted text-[13px] gap-2 cursor-text hover:border-slate-300 transition-colors"
         >
           <span className="material-symbols-outlined text-[18px] shrink-0">search</span>
-          <div className="flex-1 min-w-0 overflow-hidden whitespace-nowrap">
-            <span
-              className={`global-search-marquee inline-flex min-w-max text-text-muted/60 ${isSearchHintStatic ? 'is-static' : ''}`}
-              onAnimationEnd={() => setIsSearchHintStatic(true)}
-            >
-              Search workspaces, integrations, connections...
-            </span>
-          </div>
+          <span className="flex-1 min-w-0 text-left text-text-muted/60 truncate">Search integrations, connections...</span>
           <kbd className="shrink-0 rounded border border-border-soft bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-text-muted/60">⌘K</kbd>
-        </div>
+        </button>
       </div>
 
       <div className="flex items-center gap-2 sm:gap-3">
@@ -125,13 +124,7 @@ export function Topbar({ onOpenSidebar }: TopbarProps) {
           </span>
         </div>
 
-        <button
-          type="button"
-          className="w-9 h-9 flex items-center justify-center rounded-lg hover:bg-slate-100 text-text-muted transition-colors"
-          aria-label="Notifications"
-        >
-          <span className="material-symbols-outlined text-[20px]">notifications</span>
-        </button>
+        <NotificationsDropdown />
 
         <button
           type="button"
@@ -145,33 +138,7 @@ export function Topbar({ onOpenSidebar }: TopbarProps) {
         </button>
       </div>
 
-      <style jsx>{`
-        @keyframes globalSearchMarquee {
-          from {
-            transform: translateX(0);
-          }
-          to {
-            transform: translateX(-42%);
-          }
-        }
-
-        .global-search-marquee {
-          animation: globalSearchMarquee 8s linear 1;
-          will-change: transform;
-        }
-
-        .global-search-marquee.is-static {
-          animation: none;
-          transform: translateX(0);
-        }
-
-        @media (prefers-reduced-motion: reduce) {
-          .global-search-marquee {
-            animation: none;
-            transform: translateX(0);
-          }
-        }
-      `}</style>
+      {isSearchOpen && <GlobalSearchModal onClose={() => setIsSearchOpen(false)} />}
     </header>
   );
 }

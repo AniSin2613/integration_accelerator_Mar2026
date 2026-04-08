@@ -1,6 +1,8 @@
 'use client';
 
 import { type ReactNode } from 'react';
+import { WorkflowNodeIcon } from '@/components/ui/WorkflowNodeIcon';
+import { type WorkflowNodeIconKind } from '@/lib/workflow-node-icons';
 
 /* ------------------------------------------------------------------ */
 /*  StoryboardCard – live build block for the workflow stage            */
@@ -15,19 +17,9 @@ const STATUS_BADGE: Record<CardStatus, { bg: string; text: string; dot: string; 
   error:            { bg: 'bg-danger-bg', text: 'text-danger-text', dot: 'bg-danger', label: 'Blocker', border: 'border-danger/20' },
 };
 
-const CARD_ICON_BG: Record<string, string> = {
-  trigger:    'bg-amber-50 text-amber-600',
-  source:     'bg-emerald-50 text-emerald-600',
-  mapping:    'bg-violet-50 text-violet-600',
-  validation: 'bg-rose-50 text-rose-600',
-  target:     'bg-sky-50 text-sky-600',
-  response:   'bg-indigo-50 text-indigo-600',
-  operations: 'bg-slate-100 text-slate-600',
-};
-
 interface StoryboardCardProps {
   cardKey: string;
-  icon: string;
+  icon: WorkflowNodeIconKind;
   title: string;
   selected?: boolean;
   status: CardStatus;
@@ -47,11 +39,12 @@ export function StoryboardCard({
   children,
 }: StoryboardCardProps) {
   const badge = STATUS_BADGE[status];
-  const iconBg = CARD_ICON_BG[cardKey] ?? 'bg-slate-100 text-slate-600';
+  const iconBg = 'bg-slate-100 text-slate-700';
 
   return (
     <button
       type="button"
+      data-storyboard-card="true"
       onClick={onClick}
       className={`group relative flex h-[184px] w-[216px] flex-none flex-col rounded-xl border text-left transition-all duration-200 ${
         selected
@@ -67,7 +60,7 @@ export function StoryboardCard({
       {/* Header */}
       <div className="flex items-center gap-2 px-3.5 pt-3 pb-1.5">
         <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${iconBg} ${selected ? 'ring-1 ring-primary/10' : ''}`}>
-          <span className="material-symbols-outlined text-[16px]">{icon}</span>
+          <WorkflowNodeIcon kind={icon} size={16} className="text-current" accentColor="#BF2D42" />
         </div>
         <div className="flex-1 min-w-0">
           <p className={`text-[12px] font-semibold truncate ${selected ? 'text-primary' : 'text-text-main'}`}>
@@ -79,6 +72,7 @@ export function StoryboardCard({
             Editing
           </span>
         )}
+        <span className={`ml-auto inline-flex h-2 w-2 shrink-0 rounded-full ${badge.dot}`} aria-hidden />
       </div>
 
       {/* Summary content */}

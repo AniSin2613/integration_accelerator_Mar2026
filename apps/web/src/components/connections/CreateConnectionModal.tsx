@@ -19,6 +19,17 @@ interface CreateConnectionModalProps {
   onClose: () => void;
 }
 
+function normalizeConfigForSubmit(config: ConnectionConfig, platformLabel?: string): ConnectionConfig {
+  const normalized = { ...config, platformLabel: platformLabel?.trim() || undefined } as ConnectionConfig;
+
+  // Backend requires API key placement when API Key auth is selected.
+  if (normalized.family === 'REST / OpenAPI outbound' && normalized.authMethod === 'API Key') {
+    normalized.apiKeyPlacement = normalized.apiKeyPlacement ?? 'Header';
+  }
+
+  return normalized;
+}
+
 export function CreateConnectionModal({ workspaceSlug, onCreated, onClose }: CreateConnectionModalProps) {
   const [name, setName] = useState('');
   const [family, setFamily] = useState<ConnectionFamily>('REST / OpenAPI outbound');
@@ -44,12 +55,13 @@ export function CreateConnectionModal({ workspaceSlug, onCreated, onClose }: Cre
     setSaving(true);
     setError(null);
     try {
+      const normalizedConfig = normalizeConfigForSubmit(config, platformLabel);
       await api.post('/connections', {
         name: name.trim(),
         family: FAMILY_TO_ENUM[family],
         platformLabel: platformLabel.trim() || undefined,
         workspaceSlug,
-        config: { ...config, platformLabel: platformLabel.trim() || undefined },
+        config: normalizedConfig,
       });
       onCreated();
     } catch (err) {

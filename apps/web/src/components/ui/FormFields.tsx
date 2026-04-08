@@ -6,11 +6,28 @@ import { useState, type ReactNode } from 'react';
 /*  Shared CSS tokens (gold-standard styling)                          */
 /* ------------------------------------------------------------------ */
 
+export const FORM_LABEL_CLASS = 'text-[11px] font-semibold uppercase tracking-wide text-text-muted';
+
+export const WORKBENCH_OPTION_BASE =
+  'inline-flex min-h-[56px] items-center justify-center gap-2 rounded-[22px] border px-4 py-3 text-[13px] font-semibold leading-tight transition-all';
+
+export const WORKBENCH_OPTION_ACTIVE =
+  'border-primary bg-primary/5 text-primary ring-1 ring-primary/15';
+
+export const WORKBENCH_OPTION_INACTIVE =
+  'border-border-soft bg-surface text-text-main hover:border-primary/30';
+
+export const WORKBENCH_OPTION_DISABLED =
+  'border-border-soft/50 bg-slate-50/60 text-text-muted/50 cursor-not-allowed';
+
+export const WORKBENCH_SOON_BADGE =
+  'rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-text-muted/60';
+
 const INPUT_BASE =
-  'h-10 w-full rounded-lg border border-border-soft bg-background-light px-3 text-sm text-text-main placeholder:text-text-muted/70 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
+  'h-10 w-full rounded-lg border border-border-soft bg-background-light px-3 text-[13px] text-text-main placeholder:text-text-muted/70 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
 
 const SELECT_BASE =
-  'h-10 w-full cursor-pointer appearance-none rounded-lg border border-border-soft bg-background-light pl-3 pr-8 text-sm text-text-main transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
+  'h-10 w-full cursor-pointer appearance-none rounded-lg border border-border-soft bg-background-light pl-3 pr-8 text-[13px] text-text-main transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
 
 /* ------------------------------------------------------------------ */
 /*  FormLabel                                                          */
@@ -18,7 +35,7 @@ const SELECT_BASE =
 
 function FormLabel({ children, required }: { children: ReactNode; required?: boolean }) {
   return (
-    <span className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+    <span className={FORM_LABEL_CLASS}>
       {children}
       {required && <span className="ml-0.5 text-danger">*</span>}
     </span>
@@ -204,7 +221,7 @@ export function CheckboxField({
   disabled?: boolean;
 }) {
   return (
-    <label className="flex items-center gap-2">
+    <label className="flex items-start gap-2 pt-0.5">
       <input
         type="checkbox"
         checked={checked}
@@ -212,7 +229,7 @@ export function CheckboxField({
         disabled={disabled}
         className="h-4 w-4 rounded border-border-soft text-primary accent-primary focus:ring-primary/20 disabled:cursor-not-allowed disabled:opacity-50"
       />
-      <span className="text-sm text-text-main">{label}</span>
+      <span className="text-[13px] font-medium leading-5 text-text-main">{label}</span>
     </label>
   );
 }
@@ -243,8 +260,8 @@ export function TextAreaField({
   return (
     <div>
       {label && (
-        <label htmlFor={id} className="block text-[13px] font-semibold text-text-main">
-          {label}
+        <label htmlFor={id} className="block">
+          <span className={FORM_LABEL_CLASS}>{label}</span>
           {hint && <span className="ml-1 font-normal text-text-muted">{hint}</span>}
         </label>
       )}
@@ -255,7 +272,7 @@ export function TextAreaField({
         rows={rows}
         disabled={disabled}
         placeholder={placeholder}
-        className={`${label ? 'mt-2' : ''} w-full resize-none rounded-lg border border-border-soft bg-background-light px-3.5 py-2.5 text-sm text-text-main placeholder:text-text-muted/50 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted`}
+        className={`${label ? 'mt-1' : ''} w-full resize-none rounded-lg border border-border-soft bg-background-light px-3 py-2.5 text-[13px] text-text-main placeholder:text-text-muted/50 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted`}
       />
     </div>
   );
@@ -308,7 +325,7 @@ export function InlineSelect<T extends string>({
 /* ------------------------------------------------------------------ */
 
 const KV_INPUT_CLASSES =
-  'h-9 flex-1 rounded-lg border border-border-soft bg-background-light px-3 text-sm text-text-main placeholder:text-text-muted/70 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
+  'h-9 flex-1 rounded-lg border border-border-soft bg-background-light px-3 text-[13px] text-text-main placeholder:text-text-muted/70 transition-colors focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-text-muted';
 
 export function KeyValueListEditor({
   label,

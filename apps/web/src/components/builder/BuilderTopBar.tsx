@@ -89,7 +89,7 @@ export function BuilderTopBar({
         <span className="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
           {environment}
         </span>
-        <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
+        <span className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold whitespace-nowrap ${
           validationStatus === 'Valid'
             ? 'border border-emerald-200 bg-emerald-50 text-emerald-700'
             : validationStatus === 'Warnings'
@@ -109,7 +109,7 @@ export function BuilderTopBar({
           type="button"
           onClick={onSaveDraft}
           disabled={isSaving || !isDirty || isReadOnlyEnv}
-          className="inline-flex h-8 items-center rounded-lg border border-border-soft bg-surface px-3 text-[13px] font-medium text-text-main transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          className="inline-flex h-8 items-center rounded-lg border border-border-soft bg-surface px-3 text-[13px] font-medium text-text-main transition-colors hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
         >
           Save Draft
         </button>
@@ -117,7 +117,7 @@ export function BuilderTopBar({
           type="button"
           onClick={onValidate}
           disabled={isReadOnlyEnv}
-          className="inline-flex h-8 items-center gap-1 rounded-lg border border-border-soft bg-surface px-3 text-[13px] font-medium text-text-main transition-colors hover:bg-slate-50"
+          className="inline-flex h-8 items-center gap-1 rounded-lg border border-border-soft bg-surface px-3 text-[13px] font-medium text-text-main transition-colors hover:bg-slate-50 whitespace-nowrap"
         >
           <span className="material-symbols-outlined text-[15px]">check_circle</span>
           Validate
@@ -126,7 +126,7 @@ export function BuilderTopBar({
           type="button"
           onClick={onTest}
           disabled={isReadOnlyEnv}
-          className="inline-flex h-8 items-center gap-1 rounded-lg bg-primary px-3 text-[13px] font-semibold text-white transition-colors hover:bg-primary/90"
+          className="inline-flex h-8 items-center gap-1 rounded-lg bg-primary px-3 text-[13px] font-semibold text-white transition-colors hover:bg-primary/90 whitespace-nowrap"
         >
           <span className="material-symbols-outlined text-[15px]">play_circle</span>
           Test

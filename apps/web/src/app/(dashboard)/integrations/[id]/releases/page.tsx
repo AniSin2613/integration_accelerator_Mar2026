@@ -30,6 +30,9 @@ export default function ReleasesPage({ params }: { params: { id: string } }) {
   const [releases, setReleases] = useState<ReleaseArtifact[]>([]);
   const [loading, setLoading] = useState(true);
   const [previewYaml, setPreviewYaml] = useState<string | null>(null);
+  const [rollbackTargetId, setRollbackTargetId] = useState<string | null>(null);
+  const [rollbackReason, setRollbackReason] = useState('');
+  const [rollbackLoading, setRollbackLoading] = useState(false);
 
   useEffect(() => {
     api.get<ReleaseArtifact[]>(`/integrations/${params.id}/releases`).then((data) => {
@@ -56,10 +59,29 @@ export default function ReleasesPage({ params }: { params: { id: string } }) {
     }).catch(() => null);
   };
 
+  const handleRollback = async () => {
+    if (!rollbackTargetId) return;
+    setRollbackLoading(true);
+    try {
+      await api.post(`/integrations/${params.id}/rollback`, {
+        targetArtifactId: rollbackTargetId,
+        reason: rollbackReason.trim() || 'Manual rollback',
+      });
+      const data = await api.get<ReleaseArtifact[]>(`/integrations/${params.id}/releases`);
+      setReleases(data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
+    } catch {
+      // show nothing — a toast system can be wired here later
+    } finally {
+      setRollbackLoading(false);
+      setRollbackTargetId(null);
+      setRollbackReason('');
+    }
+  };
+
   return (
     <div className="p-4 sm:p-6 lg:p-8 space-y-6">
       <div className="flex items-center gap-4">
-        <Link href={`/integrations/${params.id}/mappings`} className="text-text-muted hover:text-primary transition-colors">
+        <Link href={`/integrations/${params.id}/mapping`} className="text-text-muted hover:text-primary transition-colors">
           <span className="material-symbols-outlined text-[20px]">arrow_back</span>
         </Link>
         <div className="flex-1">
@@ -157,6 +179,14 @@ export default function ReleasesPage({ params }: { params: { id: string } }) {
                         Promote Next
                       </button>
                     )}
+                    {(rel.status === 'SUPERSEDED' || (rel.status === 'APPROVED' && envRels.length > 0)) && (
+                      <button
+                        onClick={() => setRollbackTargetId(rel.id)}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-danger/30 bg-danger/5 text-danger font-medium hover:bg-danger/10 transition-colors"
+                      >
+                        Rollback to this version
+                      </button>
+                    )}
                     {rel.camelYaml && (
                       <button
                         onClick={() => setPreviewYaml(previewYaml === rel.id ? null : rel.id)}
@@ -179,6 +209,53 @@ export default function ReleasesPage({ params }: { params: { id: string } }) {
           );
         })}
       </div>
+
+      {/* Rollback confirmation dialog */}
+      {rollbackTargetId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="Confirm rollback">
+          <div className="absolute inset-0 bg-[#0F172A]/30 backdrop-blur-[1px]" onClick={() => setRollbackTargetId(null)} aria-hidden />
+          <div className="relative z-10 w-full max-w-md rounded-2xl bg-surface border border-border-soft shadow-xl p-6 space-y-4">
+            <div className="flex items-center gap-2">
+              <span className="material-symbols-outlined text-[20px] text-danger">history</span>
+              <h2 className="text-[15px] font-bold text-text-main">Confirm Rollback</h2>
+            </div>
+            <p className="text-sm text-text-muted">
+              This will roll back the active deployment to version{' '}
+              <span className="font-mono font-semibold text-text-main">
+                {releases.find((r) => r.id === rollbackTargetId)?.version}
+              </span>. The current deployment will be marked as superseded.
+            </p>
+            <div>
+              <label htmlFor="rollback-reason" className="block text-[12px] font-semibold text-text-main mb-1.5">Reason (optional)</label>
+              <textarea
+                id="rollback-reason"
+                rows={3}
+                value={rollbackReason}
+                onChange={(e) => setRollbackReason(e.target.value)}
+                placeholder="e.g. data quality issue found in prod after deploy"
+                className="w-full rounded-lg border border-border-soft bg-background-light px-3 py-2 text-sm text-text-main resize-none focus:outline-none focus:ring-1 focus:ring-danger/30 focus:border-danger/40"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => { setRollbackTargetId(null); setRollbackReason(''); }}
+                className="px-4 py-2 rounded-lg border border-border-soft text-sm text-text-muted hover:bg-slate-100 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={rollbackLoading}
+                onClick={handleRollback}
+                className="px-4 py-2 rounded-lg bg-danger text-white text-sm font-semibold hover:bg-danger/90 transition-colors disabled:opacity-60"
+              >
+                {rollbackLoading ? 'Rolling back…' : 'Confirm Rollback'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

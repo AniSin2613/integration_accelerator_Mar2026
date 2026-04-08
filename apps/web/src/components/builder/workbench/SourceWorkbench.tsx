@@ -1,10 +1,11 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TextField, SelectField, NumberField, CheckboxField, KeyValueListEditor } from '@/components/ui/FormFields';
 import { WorkbenchSection } from '@/components/ui/BuilderWorkbench';
 import { type SourceConfig } from '../types';
-import { MOCK_CONNECTIONS } from '../mockData';
+import { DEFAULT_WORKSPACE_SLUG } from '@/lib/workspace';
+import { api } from '@/lib/api-client';
 
 /* ------------------------------------------------------------------ */
 /*  SourceWorkbench – bottom panel for source connection + interface    */
@@ -13,30 +14,65 @@ import { MOCK_CONNECTIONS } from '../mockData';
 const OPERATIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const PAGINATION_STRATEGIES = ['None', 'Offset', 'Cursor'] as const;
 
+function toHealthLabel(raw: unknown): string {
+  const normalized = String(raw ?? '').toLowerCase();
+  if (normalized === 'healthy') return 'Healthy';
+  if (normalized === 'warning') return 'Warning';
+  if (normalized === 'failed') return 'Failed';
+  return 'Untested';
+}
+
 interface SourceWorkbenchProps {
   config: SourceConfig;
   onChange: (config: SourceConfig) => void;
 }
 
 export function SourceWorkbench({ config, onChange }: SourceWorkbenchProps) {
+  const [connections, setConnections] = useState<Array<{ id: string; name: string; family: string; status: string; baseUrl?: string }>>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await api.get<any[]>(`/connections?slug=${encodeURIComponent(DEFAULT_WORKSPACE_SLUG)}`);
+        if (cancelled) return;
+        setConnections(
+          rows.map((row) => ({
+            id: String(row.id),
+            name: String(row.name ?? 'Unnamed connection'),
+            family: String(row.family ?? 'Unknown'),
+            status: toHealthLabel(row.health),
+            baseUrl: row.baseUrl ? String(row.baseUrl) : undefined,
+          })),
+        );
+      } catch {
+        if (!cancelled) setConnections([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const set = <K extends keyof SourceConfig>(key: K, value: SourceConfig[K]) =>
     onChange({ ...config, [key]: value });
 
   const selectConnection = (connId: string) => {
-    const conn = MOCK_CONNECTIONS.find((c) => c.id === connId);
+    const conn = connections.find((c) => c.id === connId);
     if (conn) {
       onChange({ ...config, connectionId: conn.id, connectionName: conn.name, connectionFamily: conn.family, healthStatus: conn.status });
     }
   };
 
   const resolvedUrl = useMemo(() => {
-    const conn = MOCK_CONNECTIONS.find((c) => c.id === config.connectionId);
+    const conn = connections.find((c) => c.id === config.connectionId);
     if (!conn || !config.endpointPath) return null;
-    const base = conn.baseUrl.replace(/\/$/, '');
+    const base = (conn.baseUrl ?? '').replace(/\/$/, '');
+    if (!base) return null;
     const path = config.endpointPath.startsWith('/') ? config.endpointPath : `/${config.endpointPath}`;
     const qs = config.queryParams?.filter((p) => p.key).map((p) => `${p.key}=${p.value}`).join('&');
     return `${base}${path}${qs ? `?${qs}` : ''}`;
-  }, [config.connectionId, config.endpointPath, config.queryParams]);
+  }, [connections, config.connectionId, config.endpointPath, config.queryParams]);
 
   return (
     <div className="p-5">
@@ -52,7 +88,7 @@ export function SourceWorkbench({ config, onChange }: SourceWorkbenchProps) {
                 className="mt-1 w-full appearance-none rounded-lg border border-border-soft bg-background-light px-3 py-2 text-[13px] text-text-main focus:border-primary focus:ring-2 focus:ring-primary/15 transition-all"
               >
                 <option value="">Select a connection…</option>
-                {MOCK_CONNECTIONS.map((c) => (
+                {connections.map((c) => (
                   <option key={c.id} value={c.id}>{c.name} ({c.status})</option>
                 ))}
               </select>

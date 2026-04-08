@@ -35,6 +35,10 @@ const config: Config = {
         danger: '#EF4444',
         'danger-bg': '#FEE2E2',
         'danger-text': '#DC2626',
+        // AI / Copilot
+        ai: '#5a1dcd',
+        'ai-bg': '#ede8fa',
+        'ai-text': '#4a17a8',
       },
       fontFamily: {
         display: ['Inter', 'sans-serif'],

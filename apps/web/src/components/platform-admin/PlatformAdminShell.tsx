@@ -2,6 +2,8 @@ import Link from 'next/link';
 
 const MODULES = [
   { label: 'Template Catalog', href: '/platform-admin/templates', enabled: true },
+  { label: 'Target Profiles', href: '/platform-admin/target-profiles', enabled: true },
+  { label: 'Drift Review', href: '/platform-admin/drift-review', enabled: true },
   { label: 'Visibility Rules', href: '', enabled: false },
   { label: 'Demo Profiles', href: '', enabled: false },
   { label: 'Tenant Controls', href: '', enabled: false },

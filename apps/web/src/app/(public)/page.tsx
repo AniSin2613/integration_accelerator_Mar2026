@@ -866,7 +866,7 @@ function WorkflowAnimation() {
 
           {/* Mapping Node */}
           <div className="workflow-node node-mapping w-[220px] xl:w-[260px] bg-surface rounded-lg p-4 xl:p-5 shadow-floating border border-border-soft flex items-start gap-3 xl:gap-4 relative overflow-hidden">
-            <div className="ai-chip absolute top-0 right-0 bg-accent-blue/10 text-accent-blue text-[9px] font-bold px-2 py-1 rounded-bl-md flex items-center gap-1">
+            <div className="ai-chip absolute top-0 right-0 bg-ai-bg text-ai text-[9px] font-bold px-2 py-1 rounded-bl-md flex items-center gap-1">
               <span className="material-symbols-outlined text-[10px]">auto_awesome</span>
               AI MAPPED
             </div>

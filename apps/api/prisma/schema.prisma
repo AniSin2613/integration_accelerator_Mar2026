@@ -42,6 +42,14 @@ enum BusinessObject {
   VENDOR
   PURCHASE_ORDER
   INVOICE
+  REQUISITION
+  SUPPLIER
+  SUPPLIER_INFORMATION
+  LOOKUP
+  LOOKUP_VALUE
+  RECEIVING_TRANSACTION
+  INVENTORY_TRANSACTION
+  APPROVAL
   GENERIC
 }
 
@@ -60,6 +68,22 @@ enum IntegrationStatus {
   LIVE
   ATTENTION_NEEDED
   PAUSED
+}
+
+enum ReadinessStatus {
+  INCOMPLETE
+  CONFIGURED
+  VALIDATION_ISSUES
+  TEST_FAILED
+  TEST_PASSED
+  READY_FOR_RELEASE_REVIEW
+}
+
+enum BuilderStatus {
+  EDITING
+  VALIDATING
+  TESTING
+  COMPLETE
 }
 
 enum ArtifactStatus {
@@ -90,6 +114,83 @@ enum RunStatus {
   SUCCESS
   FAILED
   RETRYING
+  CANCELLED
+}
+
+enum DemoTargetType {
+  JSON
+  XML
+}
+
+enum IntegrationTestRunStatus {
+  RUNNING
+  SUCCESS
+  FAILED
+}
+
+enum ProfileDirection {
+  SOURCE
+  TARGET
+}
+
+enum BaselineProfileVersionStatus {
+  DRAFT
+  CURRENT
+  DEPRECATED
+  END_OF_SUPPORT
+}
+
+enum OverlayVersionStatus {
+  DRAFT
+  PUBLISHED
+  SUPERSEDED
+  ARCHIVED
+}
+
+enum EffectiveProfileStatus {
+  ACTIVE
+  UPDATE_AVAILABLE
+  REVIEW_REQUIRED
+  SUPERSEDED
+}
+
+enum ProfileUpdateStatus {
+  UP_TO_DATE
+  UPDATE_AVAILABLE
+  REVIEW_REQUIRED
+  END_OF_SUPPORT
+  BLOCKED_BY_PROFILE_CHANGE
+}
+
+enum ProfileImpactLevel {
+  NO_IMPACT
+  INFORMATIONAL
+  WARNING
+  BLOCKING
+}
+
+enum ProfileChangeType {
+  NEW_FIELD
+  REMOVED_FIELD
+  DEPRECATED_FIELD
+  REQUIREDNESS_CHANGED
+  TYPE_CHANGED
+  PATH_CHANGED
+}
+
+enum ProfileNoticeStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+enum RebaseStatus {
+  PENDING
+  ANALYZED
+  READY
+  BLOCKED
+  APPLIED
   CANCELLED
 }
 
@@ -125,6 +226,10 @@ model Workspace {
   integrationDefs  IntegrationDefinition[]
   releaseArtifacts ReleaseArtifact[]
   auditLogs        AuditLog[]
+  profileOverlayVersions ProfileOverlayVersion[]
+  effectiveProfileVersions EffectiveProfileVersion[]
+  profileUpdateNotices ProfileUpdateNotice[]
+  profileRebasePlans ProfileRebasePlan[]
 
   @@unique([tenantId, slug])
 }
@@ -264,6 +369,10 @@ model TemplateVersion {
   defaultMappings    Json?
   // Base Camel YAML route template with placeholders for connection/mapping values.
   camelRouteTemplate String?
+  sourceProfileFamilyId String?
+  sourceProfileVersionId String?
+  targetProfileFamilyId String?
+  targetProfileVersionId String?
   isLatest           Boolean   @default(false)
   publishedAt        DateTime?
   createdAt          DateTime  @default(now())
@@ -271,6 +380,10 @@ model TemplateVersion {
   templateDef     TemplateDefinition  @relation(fields: [templateDefId], references: [id], onDelete: Restrict)
   schemaPacks     SchemaPackBinding[]
   integrationDefs IntegrationDefinition[]
+  sourceProfileFamily  ProfileFamily?  @relation("TemplateSourceProfileFamily", fields: [sourceProfileFamilyId], references: [id], onDelete: SetNull)
+  sourceProfileVersion ProfileVersion? @relation("TemplateSourceProfileVersion", fields: [sourceProfileVersionId], references: [id], onDelete: SetNull)
+  targetProfileFamily  ProfileFamily?  @relation("TemplateTargetProfileFamily", fields: [targetProfileFamilyId], references: [id], onDelete: SetNull)
+  targetProfileVersion ProfileVersion? @relation("TemplateTargetProfileVersion", fields: [targetProfileVersionId], references: [id], onDelete: SetNull)
 
   @@unique([templateDefId, version])
 }
@@ -287,8 +400,9 @@ model SchemaPack {
   version   String
   createdAt DateTime @default(now())
 
-  fields   SchemaField[]
-  bindings SchemaPackBinding[]
+  fields         SchemaField[]
+  bindings       SchemaPackBinding[]
+  targetProfiles TargetProfile[]
 }
 
 model SchemaField {
@@ -329,15 +443,55 @@ model IntegrationDefinition {
   templateVersionId String
   name              String
   status            IntegrationStatus @default(DRAFT)
+  targetProfileId   String?
+  pinnedSourceEffectiveProfileVersionId String?
+  pinnedTargetEffectiveProfileVersionId String?
+  sourceProfileUpdateStatus             ProfileUpdateStatus @default(UP_TO_DATE)
+  targetProfileUpdateStatus             ProfileUpdateStatus @default(UP_TO_DATE)
+  sourceSchemaHash                      String?
+  targetSchemaHash                      String?
+  sourceProfileImpactLevel              ProfileImpactLevel  @default(NO_IMPACT)
+  targetProfileImpactLevel              ProfileImpactLevel  @default(NO_IMPACT)
+  profileReviewRequired                 Boolean             @default(false)
+
+  // ── Source / target connection references ──
+  sourceConnectionId  String?
+  targetConnectionId  String?
+
+  // ── Draft state stored as JSON ──
+  // Builder-level state persisted per save.
+  validationState       Json?     // ValidationConfig: { rules, policyMode }
+  responseHandlingState Json?     // ResponseHandlingConfig
+  operationsState       Json?     // MonitoringConfig
+  sourceState           Json?     // SourceGroupConfig
+  targetState           Json?     // TargetGroupConfig
+  triggerState          Json?     // TriggerConfig
+
+  // ── Readiness lifecycle ──
+  builderStatus    BuilderStatus   @default(EDITING)
+  readinessStatus  ReadinessStatus @default(INCOMPLETE)
+  draftVersion     Int             @default(1)
+  lastTestStatus   String?         // 'success' | 'error'
+  lastTestAt       DateTime?
+  createdBy        String?
+  updatedBy        String?
+
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 
   workspace       Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   templateDef     TemplateDefinition @relation(fields: [templateDefId], references: [id], onDelete: Restrict)
   templateVersion TemplateVersion    @relation(fields: [templateVersionId], references: [id], onDelete: Restrict)
+  targetProfile   TargetProfile?     @relation(fields: [targetProfileId], references: [id], onDelete: SetNull)
+  pinnedSourceEffectiveProfileVersion EffectiveProfileVersion? @relation("PinnedSourceEffectiveProfileVersion", fields: [pinnedSourceEffectiveProfileVersionId], references: [id], onDelete: SetNull)
+  pinnedTargetEffectiveProfileVersion EffectiveProfileVersion? @relation("PinnedTargetEffectiveProfileVersion", fields: [pinnedTargetEffectiveProfileVersionId], references: [id], onDelete: SetNull)
 
   mappingSets      MappingSet[]
   releaseArtifacts ReleaseArtifact[]
+  profileUpdateNotices ProfileUpdateNotice[]
+  profileRebasePlans   ProfileRebasePlan[]
+  testRuns             IntegrationTestRun[]
+  demoTargetReceipts   DemoTargetReceipt[]
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -371,6 +525,8 @@ model MappingRule {
   // Transform configuration (e.g. date format pattern, lookup table reference)
   transformConfig Json?
   status          MappingStatus @default(PENDING_REVIEW)
+  // Position in the mapping list (0-based); controls display order.
+  sortOrder       Int           @default(0)
   // AI suggestion metadata (zero-trust; requires human approval before use).
   // aiEvidenceSource stores one-or-many categories joined by "|":
   // INTERNAL_APPROVED, SOURCE_PLATFORM_OFFICIAL_DOCS,
@@ -400,12 +556,18 @@ model ReleaseArtifact {
   camelYaml        String
   // Full mapping state captured at release time
   mappingSnapshot  Json
+  sourceEffectiveProfileVersionId String?
+  targetEffectiveProfileVersionId String?
+  sourceSchemaHash               String?
+  targetSchemaHash               String?
   status           ArtifactStatus @default(DRAFT)
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
   workspace       Workspace             @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   integrationDef  IntegrationDefinition @relation(fields: [integrationDefId], references: [id], onDelete: Restrict)
+  sourceEffectiveProfileVersion EffectiveProfileVersion? @relation("ReleaseSourceEffectiveProfileVersion", fields: [sourceEffectiveProfileVersionId], references: [id], onDelete: SetNull)
+  targetEffectiveProfileVersion EffectiveProfileVersion? @relation("ReleaseTargetEffectiveProfileVersion", fields: [targetEffectiveProfileVersionId], references: [id], onDelete: SetNull)
 
   environmentReleases EnvironmentRelease[]
   approvalRequests    ApprovalRequest[]
@@ -524,6 +686,69 @@ model HealthSnapshot {
   environment Environment @relation(fields: [environmentId], references: [id], onDelete: Cascade)
 }
 
+model IntegrationTestRun {
+  id                             String                   @id @default(cuid())
+  integrationDefId               String
+  status                         IntegrationTestRunStatus
+  sourceFetchStatus              String
+  mappingStatus                  String
+  validationStatus               String
+  targetDeliveryStatus           String
+  sourceConnectionId             String?
+  targetConnectionId             String?
+  targetType                     DemoTargetType
+  targetName                     String
+  draftVersion                   Int?
+  sourceProfileEffectiveVersionId String?
+  targetProfileEffectiveVersionId String?
+  sourceSchemaHash               String?
+  targetSchemaHash               String?
+  sourcePayload                  Json?
+  outboundPayloadJson            Json?
+  outboundPayloadRaw             String?
+  // Passed records delivered to target (subset of outbound when partial validation)
+  passedPayloadJson              Json?
+  // Failed records that did not pass validation (with per-record error details)
+  failedPayloadJson              Json?
+  validationErrors               Json?
+  normalizedErrorSummary         String?
+  targetResponseStatusCode       Int?
+  targetResponseBody             String?
+  targetResponseHeaders          Json?
+  requestRef                     String?
+  responseRef                    String?
+  createdAt                      DateTime                 @default(now())
+
+  integrationDef IntegrationDefinition @relation(fields: [integrationDefId], references: [id], onDelete: Cascade)
+  receipts       DemoTargetReceipt[]
+
+  @@index([integrationDefId, createdAt])
+}
+
+model DemoTargetReceipt {
+  id                       String         @id @default(cuid())
+  targetType               DemoTargetType
+  targetName               String
+  mode                     String         @default("success")
+  integrationDefId         String?
+  testRunId                String?
+  requestHeaders           Json?
+  requestContentType       String?
+  rawRequestBody           String
+  parsedJsonBody           Json?
+  responseStatusCode       Int
+  rawResponseBody          String
+  responseHeaders          Json?
+  createdAt                DateTime       @default(now())
+
+  integrationDef IntegrationDefinition? @relation(fields: [integrationDefId], references: [id], onDelete: SetNull)
+  testRun       IntegrationTestRun?     @relation(fields: [testRunId], references: [id], onDelete: SetNull)
+
+  @@index([targetType, targetName, createdAt])
+  @@index([integrationDefId, createdAt])
+  @@index([testRunId])
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // REPORTING — Business Event Ledger
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -567,4 +792,333 @@ model AuditLog {
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Restrict)
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
   user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — TARGET PROFILES
+// ═══════════════════════════════════════════════════════════════════════════════
+
+enum OverlayType {
+  FIELD_ALIAS
+  VALIDATION_RULE
+  DEFAULT_VALUE
+  FIELD_VISIBILITY
+  CUSTOM_TRANSFORM
+}
+
+enum DriftSuggestionType {
+  NEW_FIELD
+  DEPRECATED_FIELD
+  TYPE_CHANGE
+  CONSTRAINT_CHANGE
+}
+
+enum DriftSuggestionStatus {
+  NEW
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  CONVERTED_CONDITIONAL
+}
+
+enum RuntimeIssueType {
+  MISSING_REQUIRED_FIELD
+  UNKNOWN_FIELD
+  INVALID_TYPE_OR_FORMAT
+  FORBIDDEN_VALUE
+  BUSINESS_RULE_REJECTION
+  AUTH_OR_PERMISSION_ISSUE
+  TARGET_CONTRACT_MISMATCH
+  UNKNOWN_TARGET_ERROR
+}
+
+enum DriftSuggestedChange {
+  MARK_CUSTOMER_REQUIRED
+  MARK_CONDITIONAL
+  REVIEW_UNKNOWN_FIELD
+  REVIEW_FIELD_TYPE
+  REVIEW_FIELD_VISIBILITY
+}
+
+// A TargetProfile is a curated, organization-specific view of a target schema.
+// It layers business-friendly naming, validation rules, defaults, and visibility
+// on top of a base SchemaPack.
+model TargetProfile {
+  id               String    @id @default(cuid())
+  schemaPackId     String
+  system           String    // e.g. "SAP", "Dynamics"
+  object           String    // e.g. "Invoice", "Vendor"
+  name             String
+  description      String?
+  isPublished      Boolean   @default(false)
+  currentVersionId String?   @unique
+  profileFamilyId  String?   @unique
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  schemaPack      SchemaPack           @relation(fields: [schemaPackId], references: [id], onDelete: Restrict)
+  currentVersion  TargetProfileVersion? @relation("CurrentVersion", fields: [currentVersionId], references: [id])
+  profileFamily   ProfileFamily?       @relation(fields: [profileFamilyId], references: [id], onDelete: SetNull)
+  fields          TargetProfileField[]
+  overlays        TargetProfileOverlay[]
+  versions        TargetProfileVersion[] @relation("ProfileVersions")
+  driftSuggestions DriftSuggestion[]
+  integrations    IntegrationDefinition[]
+}
+
+model TargetProfileField {
+  id              String   @id @default(cuid())
+  targetProfileId String
+  path            String   // mirrors SchemaField.path
+  dataType        String
+  required        Boolean  @default(false)
+  businessName    String?  // friendly label for business users
+  description     String?
+  validationRule  String?  // e.g. regex or expression
+  defaultValue    String?
+  example         String?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  targetProfile TargetProfile @relation(fields: [targetProfileId], references: [id], onDelete: Cascade)
+
+  @@unique([targetProfileId, path])
+}
+
+model TargetProfileOverlay {
+  id              String      @id @default(cuid())
+  targetProfileId String
+  overlayType     OverlayType
+  // Overlay payload — schema depends on overlayType:
+  //   FIELD_ALIAS:       { fieldPath, alias }
+  //   VALIDATION_RULE:   { fieldPath, rule }
+  //   DEFAULT_VALUE:     { fieldPath, value }
+  //   FIELD_VISIBILITY:  { fieldPath, visible }
+  //   CUSTOM_TRANSFORM:  { fieldPath, expression }
+  config          Json
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  targetProfile TargetProfile @relation(fields: [targetProfileId], references: [id], onDelete: Cascade)
+}
+
+// Target profile versions are immutable once published.
+model TargetProfileVersion {
+  id              String    @id @default(cuid())
+  targetProfileId String
+  version         String    // semver e.g. "1.0.0"
+  snapshotJson    Json      // complete profile + fields + overlays at publish time
+  publishedAt     DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  targetProfile       TargetProfile @relation("ProfileVersions", fields: [targetProfileId], references: [id], onDelete: Cascade)
+  currentOfProfile    TargetProfile? @relation("CurrentVersion")
+
+  @@unique([targetProfileId, version])
+}
+
+model DriftSuggestion {
+  id              String                @id @default(cuid())
+  targetProfileId String
+  fieldPath       String
+  suggestionType  DriftSuggestionType
+  // Details about the detected drift (e.g. old type, new type, added field metadata)
+  details         Json
+  isApplied       Boolean               @default(false)
+  createdAt       DateTime              @default(now())
+
+  // ── Runtime drift review fields ──────────────────────────────────────────
+  status            DriftSuggestionStatus @default(NEW)
+  observedIssueType RuntimeIssueType?
+  suggestedChange   DriftSuggestedChange?
+  confidence        Decimal?              @db.Decimal(3, 2) // 0.00 – 1.00
+  environment       String?               // e.g. "DEV", "TEST", "PROD"
+  // Evidence references (stored as opaque refs, not raw payloads)
+  requestRef        String?               // reference to the request that produced this issue
+  responseRef       String?               // reference to the response
+  rawErrorExcerpt   String?               @db.Text
+  sourceRunRef      String?               // workflow run or test-run ID
+  // Review workflow
+  reviewerNote      String?               @db.Text
+  reviewedBy        String?               // user ID of reviewer
+  reviewedAt        DateTime?
+  // Overlay created on approval
+  overlayId         String?               // overlay created when approved
+  versionId         String?               // profile version created on approval
+  updatedAt         DateTime              @updatedAt
+
+  targetProfile TargetProfile @relation(fields: [targetProfileId], references: [id], onDelete: Cascade)
+
+  @@index([targetProfileId, status])
+  @@index([status])
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DESIGN — GENERIC PROFILE REGISTRY (SOURCE + TARGET)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+model ProfileFamily {
+  id               String           @id @default(cuid())
+  direction        ProfileDirection
+  system           String
+  interfaceName    String
+  object           String?
+  platformOwned    Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  baselineVersions    ProfileVersion[]
+  overlayVersions     ProfileOverlayVersion[]
+  effectiveVersions   EffectiveProfileVersion[]
+  sourceTemplateRefs  TemplateVersion[] @relation("TemplateSourceProfileFamily")
+  targetTemplateRefs  TemplateVersion[] @relation("TemplateTargetProfileFamily")
+  targetProfileLegacy TargetProfile?
+
+  @@unique([direction, system, interfaceName])
+}
+
+model ProfileVersion {
+  id                 String                       @id @default(cuid())
+  profileFamilyId    String
+  version            String
+  status             BaselineProfileVersionStatus @default(DRAFT)
+  schemaSnapshot     Json
+  schemaHash         String?
+  publishedAt        DateTime?
+  deprecatedAt       DateTime?
+  endOfSupportAt     DateTime?
+  createdAt          DateTime                     @default(now())
+  updatedAt          DateTime                     @updatedAt
+
+  profileFamily      ProfileFamily               @relation(fields: [profileFamilyId], references: [id], onDelete: Cascade)
+  overlayVersions    ProfileOverlayVersion[]
+  effectiveVersions  EffectiveProfileVersion[]
+  sourceTemplateRefs TemplateVersion[] @relation("TemplateSourceProfileVersion")
+  targetTemplateRefs TemplateVersion[] @relation("TemplateTargetProfileVersion")
+  oldRebasePlans     ProfileRebasePlan[] @relation("OldBaselineProfileVersion")
+  newRebasePlans     ProfileRebasePlan[] @relation("NewBaselineProfileVersion")
+
+  @@unique([profileFamilyId, version])
+  @@index([profileFamilyId, status])
+  @@index([status, endOfSupportAt])
+}
+
+model ProfileOverlayVersion {
+  id                      String               @id @default(cuid())
+  profileFamilyId         String
+  baselineProfileVersionId String
+  workspaceId             String
+  version                 String
+  status                  OverlayVersionStatus @default(DRAFT)
+  overlayDelta            Json
+  schemaHash              String?
+  publishedAt             DateTime?
+  createdAt               DateTime             @default(now())
+  updatedAt               DateTime             @updatedAt
+
+  profileFamily           ProfileFamily        @relation(fields: [profileFamilyId], references: [id], onDelete: Cascade)
+  baselineProfileVersion  ProfileVersion       @relation(fields: [baselineProfileVersionId], references: [id], onDelete: Restrict)
+  workspace               Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
+  effectiveVersions       EffectiveProfileVersion[]
+  rebasePlans             ProfileRebasePlan[]
+
+  @@unique([workspaceId, profileFamilyId, version])
+  @@index([profileFamilyId, workspaceId, status])
+}
+
+model EffectiveProfileVersion {
+  id                      String                 @id @default(cuid())
+  profileFamilyId         String
+  baselineProfileVersionId String
+  overlayVersionId        String?
+  workspaceId             String?
+  status                  EffectiveProfileStatus @default(ACTIVE)
+  effectiveSchemaSnapshot Json
+  schemaHash              String
+  publishedAt             DateTime?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+
+  profileFamily                 ProfileFamily          @relation(fields: [profileFamilyId], references: [id], onDelete: Cascade)
+  baselineProfileVersion        ProfileVersion         @relation(fields: [baselineProfileVersionId], references: [id], onDelete: Restrict)
+  overlayVersion                ProfileOverlayVersion? @relation(fields: [overlayVersionId], references: [id], onDelete: SetNull)
+  workspace                     Workspace?             @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  pinnedAsSourceBy              IntegrationDefinition[] @relation("PinnedSourceEffectiveProfileVersion")
+  pinnedAsTargetBy              IntegrationDefinition[] @relation("PinnedTargetEffectiveProfileVersion")
+  releaseAsSourceBy             ReleaseArtifact[]      @relation("ReleaseSourceEffectiveProfileVersion")
+  releaseAsTargetBy             ReleaseArtifact[]      @relation("ReleaseTargetEffectiveProfileVersion")
+  noticesAsPinned               ProfileUpdateNotice[]  @relation("NoticePinnedEffectiveProfileVersion")
+  noticesAsLatest               ProfileUpdateNotice[]  @relation("NoticeLatestEffectiveProfileVersion")
+  rebaseCandidates              ProfileRebasePlan[]    @relation("RebaseCandidateEffectiveProfileVersion")
+
+  @@index([profileFamilyId, workspaceId, status])
+  @@index([status])
+}
+
+model ProfileUpdateNotice {
+  id                              String              @id @default(cuid())
+  workspaceId                     String
+  integrationDefId                String?
+  direction                       ProfileDirection
+  pinnedEffectiveProfileVersionId String?
+  latestEffectiveProfileVersionId String?
+  impactLevel                     ProfileImpactLevel  @default(NO_IMPACT)
+  status                          ProfileNoticeStatus @default(OPEN)
+  blockingReason                  String?
+  summary                         String?
+  details                         Json?
+  createdAt                       DateTime            @default(now())
+  updatedAt                       DateTime            @updatedAt
+
+  workspace                       Workspace               @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  integrationDef                  IntegrationDefinition?  @relation(fields: [integrationDefId], references: [id], onDelete: Cascade)
+  pinnedEffectiveProfileVersion   EffectiveProfileVersion? @relation("NoticePinnedEffectiveProfileVersion", fields: [pinnedEffectiveProfileVersionId], references: [id], onDelete: SetNull)
+  latestEffectiveProfileVersion   EffectiveProfileVersion? @relation("NoticeLatestEffectiveProfileVersion", fields: [latestEffectiveProfileVersionId], references: [id], onDelete: SetNull)
+  changes                         ProfileImpactChange[]
+
+  @@index([workspaceId, status, impactLevel])
+  @@index([integrationDefId])
+}
+
+model ProfileImpactChange {
+  id            String             @id @default(cuid())
+  noticeId      String
+  changeType    ProfileChangeType
+  fieldPath     String
+  oldValue      String?
+  newValue      String?
+  impactLevel   ProfileImpactLevel @default(INFORMATIONAL)
+
+  notice        ProfileUpdateNotice @relation(fields: [noticeId], references: [id], onDelete: Cascade)
+
+  @@index([noticeId, impactLevel])
+}
+
+model ProfileRebasePlan {
+  id                               String              @id @default(cuid())
+  workspaceId                      String
+  integrationDefId                 String
+  direction                        ProfileDirection
+  oldBaselineProfileVersionId      String
+  newBaselineProfileVersionId      String
+  currentOverlayVersionId          String?
+  candidateEffectiveProfileVersionId String?
+  impactLevel                      ProfileImpactLevel  @default(NO_IMPACT)
+  status                           RebaseStatus        @default(PENDING)
+  impactSummary                    Json?
+  candidateMappingPatch            Json?
+  createdAt                        DateTime            @default(now())
+  updatedAt                        DateTime            @updatedAt
+
+  workspace                        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  integrationDef                   IntegrationDefinition @relation(fields: [integrationDefId], references: [id], onDelete: Cascade)
+  oldBaselineProfileVersion        ProfileVersion       @relation("OldBaselineProfileVersion", fields: [oldBaselineProfileVersionId], references: [id], onDelete: Restrict)
+  newBaselineProfileVersion        ProfileVersion       @relation("NewBaselineProfileVersion", fields: [newBaselineProfileVersionId], references: [id], onDelete: Restrict)
+  currentOverlayVersion            ProfileOverlayVersion? @relation(fields: [currentOverlayVersionId], references: [id], onDelete: SetNull)
+  candidateEffectiveProfileVersion EffectiveProfileVersion? @relation("RebaseCandidateEffectiveProfileVersion", fields: [candidateEffectiveProfileVersionId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, integrationDefId, direction])
+  @@index([status])
 }

@@ -1,9 +1,12 @@
+"use client";
+
 import Link from 'next/link';
 import { Badge } from '@/components/ui/Badge';
 import { type IntegrationListRow, type IntegrationListStatus } from './types';
 
 interface IntegrationsTableProps {
   rows: IntegrationListRow[];
+  onDelete: (id: string) => Promise<void>;
 }
 
 function statusVariant(status: IntegrationListStatus): 'success' | 'warning' | 'danger' | 'draft' | 'neutral' {
@@ -23,7 +26,7 @@ function NoMatchesState() {
   );
 }
 
-export function IntegrationsTable({ rows }: IntegrationsTableProps) {
+export function IntegrationsTable({ rows, onDelete }: IntegrationsTableProps) {
   return (
     <section className="overflow-hidden rounded-xl border border-border-soft bg-surface shadow-soft">
       {rows.length === 0 ? (
@@ -41,7 +44,7 @@ export function IntegrationsTable({ rows }: IntegrationsTableProps) {
                   <th className="px-5 py-3 text-left font-medium text-text-muted">Last Run</th>
                   <th className="px-5 py-3 text-left font-medium text-text-muted">Last Updated</th>
                   <th className="px-5 py-3 text-left font-medium text-text-muted">Owner</th>
-                  <th className="px-5 py-3 text-right font-medium text-text-muted">Action</th>
+                  <th className="px-5 py-3 text-right font-medium text-text-muted">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -56,10 +59,31 @@ export function IntegrationsTable({ rows }: IntegrationsTableProps) {
                     <td className="px-5 py-3.5 text-text-muted tabular-nums">{row.lastRun}</td>
                     <td className="px-5 py-3.5 text-text-muted tabular-nums">{row.lastUpdated}</td>
                     <td className="px-5 py-3.5 text-text-muted">{row.owner}</td>
-                    <td className="px-5 py-3.5 text-right">
-                      <Link href={row.href} className="text-[12px] font-semibold text-primary hover:underline">
-                        View
-                      </Link>
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center justify-end gap-3 text-[12px]">
+                        <Link href={row.reviewHref} className="font-semibold text-primary hover:underline">
+                          Review
+                        </Link>
+                        <Link href={row.builderHref} className="font-medium text-text-muted hover:text-text-main hover:underline">
+                          Builder
+                        </Link>
+                        <Link href={row.releasesHref} className="font-medium text-text-muted hover:text-text-main hover:underline">
+                          Releases
+                        </Link>
+                        <button
+                          type="button"
+                          className="font-medium text-danger hover:underline"
+                          onClick={async () => {
+                            const confirmed = window.confirm(
+                              `Delete \"${row.name}\"? This removes draft mappings, release history, and test traces.`,
+                            );
+                            if (!confirmed) return;
+                            await onDelete(row.id);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -91,9 +115,30 @@ export function IntegrationsTable({ rows }: IntegrationsTableProps) {
 
                 <div className="mt-4 flex items-center justify-between gap-3 border-t border-border-soft pt-3">
                   <p className="text-sm text-text-muted">{row.owner}</p>
-                  <Link href={row.href} className="text-sm font-semibold text-primary hover:underline">
-                    View
-                  </Link>
+                  <div className="flex items-center gap-3 text-sm">
+                    <Link href={row.reviewHref} className="font-semibold text-primary hover:underline">
+                      Review
+                    </Link>
+                    <Link href={row.builderHref} className="text-text-muted hover:text-text-main hover:underline">
+                      Builder
+                    </Link>
+                    <Link href={row.releasesHref} className="text-text-muted hover:text-text-main hover:underline">
+                      Releases
+                    </Link>
+                    <button
+                      type="button"
+                      className="text-danger hover:underline"
+                      onClick={async () => {
+                        const confirmed = window.confirm(
+                          `Delete \"${row.name}\"? This removes draft mappings, release history, and test traces.`,
+                        );
+                        if (!confirmed) return;
+                        await onDelete(row.id);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </article>
             ))}

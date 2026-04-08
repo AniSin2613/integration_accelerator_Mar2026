@@ -53,3 +53,4 @@ The V1 runner handles one execution at a time. Concurrency and restart handling 
 |---|---|---|---|
 | `GET` | `/health` | — | Liveness check |
 | `POST` | `/run` | `{"route": "/app/routes/my-route.yaml"}` | Execute a route file |
+| `POST` | `/preview-run` | `{"route": "/app/routes/my-preview-route.yaml"}` | Execute a one-shot preview route and return extracted mapped payload |

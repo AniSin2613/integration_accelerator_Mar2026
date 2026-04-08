@@ -1,20 +1,22 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { TextField, SelectField, NumberField, CheckboxField, KeyValueListEditor } from '@/components/ui/FormFields';
 import { WorkbenchSection } from '@/components/ui/BuilderWorkbench';
 import { type SourceGroupConfig } from '../types';
-import { MOCK_CONNECTIONS } from '../mockData';
 
 const OPERATIONS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
 const PAGINATION_STRATEGIES = ['None', 'Offset', 'Cursor'] as const;
 
 interface SourceGroupWorkbenchProps {
   config: SourceGroupConfig;
+  connections: Array<{ id: string; name: string; family: string; status: string; baseUrl?: string }>;
   onChange: (config: SourceGroupConfig) => void;
 }
 
-export function SourceGroupWorkbench({ config, onChange }: SourceGroupWorkbenchProps) {
+export function SourceGroupWorkbench({ config, connections, onChange }: SourceGroupWorkbenchProps) {
+  const availableConnections = connections;
+
   const setPrimary = <K extends keyof SourceGroupConfig['primary']>(key: K, value: SourceGroupConfig['primary'][K]) =>
     onChange({ ...config, primary: { ...config.primary, [key]: value } });
 
@@ -36,7 +38,7 @@ export function SourceGroupWorkbench({ config, onChange }: SourceGroupWorkbenchP
   }, [config, onChange]);
 
   const selectConnection = (connId: string) => {
-    const conn = MOCK_CONNECTIONS.find((c) => c.id === connId);
+    const conn = availableConnections.find((c) => c.id === connId);
     if (!conn) return;
     onChange({
       ...config,
@@ -50,44 +52,24 @@ export function SourceGroupWorkbench({ config, onChange }: SourceGroupWorkbenchP
     });
   };
 
+  const resolvedUrl = useMemo(() => {
+    const conn = availableConnections.find((c) => c.id === config.primary.connectionId);
+    if (!conn || !config.primary.endpointPath || !conn.baseUrl) return null;
+    const base = conn.baseUrl.replace(/\/$/, '');
+    const path = config.primary.endpointPath.startsWith('/')
+      ? config.primary.endpointPath
+      : `/${config.primary.endpointPath}`;
+    const qs = config.primary.queryParams
+      .filter((p) => String(p.key ?? '').trim().length > 0)
+      .map((p) => `${encodeURIComponent(String(p.key))}=${encodeURIComponent(String(p.value ?? ''))}`)
+      .join('&');
+    return `${base}${path}${qs ? `?${qs}` : ''}`;
+  }, [availableConnections, config.primary.connectionId, config.primary.endpointPath, config.primary.queryParams]);
+
   return (
     <div className="p-4 space-y-5 pb-6">
-      {/* 1. Source Design Pattern */}
-      <WorkbenchSection label="Source Design Pattern">
-        <div className="flex items-center gap-2 flex-wrap">
-          <button
-            type="button"
-            className="rounded-lg border border-primary bg-primary/5 px-3 py-1.5 text-[12px] text-primary"
-          >
-            Single Source
-          </button>
-          <button
-            type="button"
-            disabled
-            title="Multiple sources are planned for a future release"
-            className="rounded-lg border border-border-soft/50 bg-slate-50/50 px-3 py-1.5 text-[12px] text-text-muted/50 cursor-not-allowed"
-          >
-            Multiple Sources
-          </button>
-          <div className="h-4 w-px bg-border-soft mx-1" />
-          {['Primary + Lookup', 'Parallel Merge'].map((p) => (
-            <button
-              key={p}
-              type="button"
-              disabled
-              title="Coming in a future release"
-              className="flex items-center gap-1.5 rounded-lg border border-border-soft/50 bg-slate-50/50 px-3 py-1.5 text-[12px] text-text-muted/50 cursor-not-allowed"
-            >
-              {p}
-              <span className="rounded bg-slate-100 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-text-muted/50">Soon</span>
-            </button>
-          ))}
-        </div>
-        <p className="mt-2 text-[11px] text-text-muted">Multiple source orchestration is disabled for this release. Build with one source first.</p>
-      </WorkbenchSection>
-
-      {/* 2. Primary Source Configuration */}
-      <WorkbenchSection label="Primary Source Configuration">
+      {/* 1. Source Configuration */}
+      <WorkbenchSection label="Source Configuration">
         <div className="space-y-4">
           <label className="relative block">
             <span className="block text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted mb-1">Connection</span>
@@ -97,10 +79,13 @@ export function SourceGroupWorkbench({ config, onChange }: SourceGroupWorkbenchP
               className="w-full appearance-none rounded-lg border border-border-soft bg-background-light px-3 py-2 text-[13px] text-text-main focus:border-primary focus:ring-2 focus:ring-primary/15 transition-all"
             >
               <option value="">Select a source connection…</option>
-              {MOCK_CONNECTIONS.map((c) => (
+              {availableConnections.map((c) => (
                 <option key={c.id} value={c.id}>{c.name} ({c.status})</option>
               ))}
             </select>
+            {availableConnections.length === 0 && (
+              <p className="mt-1 text-[11px] text-text-muted">No saved connections found for this workspace.</p>
+            )}
           </label>
 
           <div className="grid grid-cols-2 gap-3">
@@ -111,25 +96,52 @@ export function SourceGroupWorkbench({ config, onChange }: SourceGroupWorkbenchP
             </div>
           </div>
 
-          <KeyValueListEditor label="Parameters" entries={config.primary.queryParams} onChange={(entries) => setPrimary('queryParams', entries)} />
+          <div className="space-y-4">
+            <KeyValueListEditor label="Query Parameters" entries={config.primary.queryParams} onChange={(entries) => setPrimary('queryParams', entries)} />
+            <KeyValueListEditor label="Headers" entries={config.primary.headers ?? []} onChange={(entries) => setPrimary('headers', entries)} />
+          </div>
+
+          <div className="space-y-4">
+            <SelectField label="Incremental Read" value={config.primary.incrementalReadMode} options={['Off', 'Timestamp Cursor']} onChange={(v) => setPrimary('incrementalReadMode', v as SourceGroupConfig['primary']['incrementalReadMode'])} />
+
+            <div className="rounded-lg border border-border-soft bg-background-light px-3 py-3">
+              <div className="space-y-3">
+                <CheckboxField label="Enable pagination" checked={config.primary.paginationEnabled} onChange={(v) => setPrimary('paginationEnabled', v)} />
+                {config.primary.paginationEnabled && (
+                  <div className="grid grid-cols-2 gap-3 pl-6">
+                    <SelectField label="Strategy" value={config.primary.paginationStrategy} options={[...PAGINATION_STRATEGIES]} onChange={(v) => setPrimary('paginationStrategy', v as SourceGroupConfig['primary']['paginationStrategy'])} />
+                    <NumberField label="Page Size" value={config.primary.pageSize} min={1} max={10000} onChange={(v) => setPrimary('pageSize', v)} />
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </WorkbenchSection>
 
-      {/* 3. Global Source Settings */}
-      <WorkbenchSection label="Global Source Settings">
-        <div className="grid grid-cols-2 gap-4">
-          <div className="space-y-3">
-            <CheckboxField label="Enable pagination" checked={config.primary.paginationEnabled} onChange={(v) => setPrimary('paginationEnabled', v)} />
+      {/* 2. Full endpoint preview */}
+      {resolvedUrl && (
+        <WorkbenchSection label="Resolved Endpoint Preview">
+          <div className="rounded-lg border border-dashed border-border-soft bg-slate-50/80 px-4 py-3">
+            <div className="flex items-center gap-2 mb-1.5">
+              <span className="material-symbols-outlined text-[14px] text-emerald-600">link</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.08em] text-text-muted">Full Source Endpoint</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="shrink-0 rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                {config.primary.operation}
+              </span>
+              <code className="text-[11px] font-mono text-text-main break-all select-all">{resolvedUrl}</code>
+            </div>
             {config.primary.paginationEnabled && (
-              <div className="flex flex-col gap-3 ml-6">
-                <SelectField label="Strategy" value={config.primary.paginationStrategy} options={[...PAGINATION_STRATEGIES]} onChange={(v) => setPrimary('paginationStrategy', v as SourceGroupConfig['primary']['paginationStrategy'])} />
-                <NumberField label="Page Size" value={config.primary.pageSize} min={1} max={10000} onChange={(v) => setPrimary('pageSize', v)} />
-              </div>
+              <p className="text-[10px] text-text-muted mt-1.5 flex items-center gap-1">
+                <span className="material-symbols-outlined text-[12px]">pages</span>
+                Pagination: {config.primary.paginationStrategy} · Page size {config.primary.pageSize}
+              </p>
             )}
           </div>
-          <SelectField label="Incremental Read" value={config.primary.incrementalReadMode} options={['Off', 'Timestamp Cursor']} onChange={(v) => setPrimary('incrementalReadMode', v as SourceGroupConfig['primary']['incrementalReadMode'])} />
-        </div>
-      </WorkbenchSection>
+        </WorkbenchSection>
+      )}
     </div>
   );
 }

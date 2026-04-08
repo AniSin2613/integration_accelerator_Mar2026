@@ -94,6 +94,20 @@ export class ReleasesService {
       );
     }
 
+    const blockedByProfileLifecycle =
+      integration.sourceProfileUpdateStatus === 'END_OF_SUPPORT' ||
+      integration.targetProfileUpdateStatus === 'END_OF_SUPPORT' ||
+      integration.sourceProfileUpdateStatus === 'BLOCKED_BY_PROFILE_CHANGE' ||
+      integration.targetProfileUpdateStatus === 'BLOCKED_BY_PROFILE_CHANGE' ||
+      integration.sourceProfileImpactLevel === 'BLOCKING' ||
+      integration.targetProfileImpactLevel === 'BLOCKING';
+
+    if (blockedByProfileLifecycle) {
+      throw new ForbiddenException(
+        'Release is blocked by profile lifecycle status. Review update notices and complete profile rebase/review before release.',
+      );
+    }
+
     // Generate Camel YAML — REST-to-REST for the vertical slice template
     // In future phases this will dispatch to template-specific builders
     const camelYaml = this.camel.generateRestToRestYaml({
@@ -119,6 +133,10 @@ export class ReleasesService {
         version: dto.version,
         camelYaml,
         mappingSnapshot: approvedSet.snapshotJson ?? {},
+        sourceEffectiveProfileVersionId: integration.pinnedSourceEffectiveProfileVersionId,
+        targetEffectiveProfileVersionId: integration.pinnedTargetEffectiveProfileVersionId,
+        sourceSchemaHash: integration.sourceSchemaHash,
+        targetSchemaHash: integration.targetSchemaHash,
         status: 'DRAFT',
       },
     });

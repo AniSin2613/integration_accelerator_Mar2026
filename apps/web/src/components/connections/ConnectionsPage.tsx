@@ -18,12 +18,13 @@ import {
   type ConnectionStatusFilterOption,
   toConnectionRow,
 } from './types';
+import { DEFAULT_WORKSPACE_SLUG } from '@/lib/workspace';
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const WORKSPACE_SLUG = 'procurement';
+const WORKSPACE_SLUG = DEFAULT_WORKSPACE_SLUG;
 
 const STATUS_SORT_ORDER: Record<ConnectionStatus, number> = {
   Failed: 0,

@@ -63,6 +63,8 @@ interface BaseConnectionConfig {
 export interface RestOpenApiConnectionConfig extends BaseConnectionConfig {
   family: 'REST / OpenAPI outbound';
   baseUrl: string;
+  testPath?: string;
+  testMethod?: 'GET' | 'HEAD' | 'POST';
   authMethod: RestAuthMethod;
   apiKeyName?: string;
   apiKeyPlacement?: 'Header' | 'Query';
@@ -240,7 +242,7 @@ export function toConnectionRow(item: ConnectionListItem): ConnectionRow {
 
 export function createDefaultConfig(family: ConnectionFamily): ConnectionConfig {
   if (family === 'REST / OpenAPI outbound') {
-    return { family, baseUrl: '', authMethod: 'None', timeoutMs: 10000 };
+    return { family, baseUrl: '', testPath: '', testMethod: 'GET', authMethod: 'None', timeoutMs: 10000 };
   }
   if (family === 'Webhook / HTTP inbound') {
     return { family, path: '/webhook/events', methods: ['POST'], consumes: 'application/json' };

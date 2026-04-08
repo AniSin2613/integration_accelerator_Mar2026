@@ -14,12 +14,22 @@ RUN apk add --no-cache curl bash socat jq
 RUN apk add --no-cache openjdk17-jdk 2>/dev/null || true
 RUN if command -v java >/dev/null 2>&1; then \
       curl -Ls https://sh.jbang.dev | bash -s - app setup \
-      && /root/.jbang/bin/jbang app install camel@apache/camel:4.8.5 \
-      && camel --version || true; \
+      && /root/.jbang/bin/jbang trust add https://github.com/apache/ \
+      && /root/.jbang/bin/jbang app install --fresh --name camel camel@apache/camel \
+      && ln -sf /root/.jbang/bin/jbang /usr/local/bin/jbang \
+      && ln -sf /root/.jbang/bin/camel /usr/local/bin/camel \
+      && /usr/local/bin/camel --version \
+      && echo '- route:' > /tmp/_warmup.yaml \
+      && echo '    from:' >> /tmp/_warmup.yaml \
+      && echo '      uri: "timer:warmup?repeatCount=1"' >> /tmp/_warmup.yaml \
+      && echo '      steps:' >> /tmp/_warmup.yaml \
+      && echo '        - log: "cache-warmup"' >> /tmp/_warmup.yaml \
+      && timeout 60 /usr/local/bin/camel run /tmp/_warmup.yaml --max-messages=1 2>&1 || true \
+      && rm -f /tmp/_warmup.yaml; \
     fi
 
-# Add JBang to PATH (no-op if not installed)
-ENV PATH="/root/.jbang/bin:${PATH}"
+# Ensure JBang and Camel are reachable from non-login shells.
+ENV PATH="/root/.jbang/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 WORKDIR /app
 

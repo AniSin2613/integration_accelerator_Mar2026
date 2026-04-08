@@ -10,7 +10,20 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => res.statusText);
-    throw new Error(`API ${res.status}: ${body}`);
+    let message = body;
+    try {
+      const parsed = JSON.parse(body) as { message?: string | string[]; error?: string };
+      if (Array.isArray(parsed.message)) {
+        message = parsed.message.join('; ');
+      } else if (typeof parsed.message === 'string' && parsed.message.trim().length > 0) {
+        message = parsed.message;
+      } else if (typeof parsed.error === 'string' && parsed.error.trim().length > 0) {
+        message = parsed.error;
+      }
+    } catch {
+      // Response body is not JSON; keep raw text.
+    }
+    throw new Error(`API ${res.status}: ${message}`);
   }
   return res.json() as Promise<T>;
 }

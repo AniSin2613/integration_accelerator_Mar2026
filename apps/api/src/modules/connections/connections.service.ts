@@ -19,6 +19,7 @@ export interface NormalizedConnectionTestResult {
 }
 
 const REST_AUTH_METHODS = ['None', 'API Key', 'Basic', 'Bearer Token', 'OAuth 2.0', 'Mutual TLS'] as const;
+const REST_TEST_METHODS = ['GET', 'HEAD', 'POST'] as const;
 const SFTP_AUTH_MODES = ['Password', 'Private Key'] as const;
 const S3_CREDENTIAL_MODES = ['Access Key / Secret Key', 'Profile / Default Credentials'] as const;
 
@@ -189,7 +190,9 @@ export class ConnectionsService {
         connectionDefId: connectionId,
         environmentId,
         success: status === 'healthy',
-        errorMessage: status === 'failed' ? normalized.summaryMessage : undefined,
+        errorMessage: status !== 'healthy'
+          ? `${status === 'warning' ? '[warning] ' : ''}${normalized.summaryMessage}`
+          : undefined,
       },
     });
 
@@ -327,21 +330,32 @@ export class ConnectionsService {
 
     if (family === 'REST_OPENAPI') {
       const baseUrl = this.readStringField(config, 'baseUrl', true)!;
+      const testPathRaw = this.readStringField(config, 'testPath');
+      const testMethod = (this.readStringField(config, 'testMethod') ?? 'GET').toUpperCase();
       const authMethod = this.readStringField(config, 'authMethod', true)!;
+      if (!REST_TEST_METHODS.includes(testMethod as (typeof REST_TEST_METHODS)[number])) {
+        throw new BadRequestException('testMethod must be one of GET, HEAD, POST');
+      }
       if (!REST_AUTH_METHODS.includes(authMethod as (typeof REST_AUTH_METHODS)[number])) {
         throw new BadRequestException('authMethod must be one of None, API Key, Basic, Bearer Token, OAuth 2.0, Mutual TLS');
       }
 
+      const testPath = testPathRaw
+        ? (testPathRaw.startsWith('/') ? testPathRaw : `/${testPathRaw}`)
+        : undefined;
+
       const normalized: Record<string, unknown> = {
         ...metadata,
         baseUrl,
+        testPath,
+        testMethod,
         authMethod,
         timeoutMs: this.readNumberField(config, 'timeoutMs') ?? 10000,
       };
 
       if (authMethod === 'API Key') {
         normalized.apiKeyName = this.readStringField(config, 'apiKeyName', true);
-        normalized.apiKeyPlacement = this.readStringField(config, 'apiKeyPlacement', true);
+        normalized.apiKeyPlacement = this.readStringField(config, 'apiKeyPlacement') ?? 'Header';
         normalized.apiKeyValueRef = this.toSecretRef(
           config.apiKeyValueRef ?? config.apiKeyValue,
           'rest-api-key-value',
@@ -564,6 +578,9 @@ export class ConnectionsService {
         : 'failed'
       : 'untested';
 
+    // Extract only the non-sensitive baseUrl so workbenches can build resolved endpoint previews
+    const baseUrl = typeof config.baseUrl === 'string' ? config.baseUrl : undefined;
+
     return {
       id: row.id,
       name: row.name,
@@ -573,6 +590,7 @@ export class ConnectionsService {
       lastTested: latestTest ? latestTest.testedAt.toISOString() : '--',
       updated: row.updatedAt.toISOString(),
       usedIn: row.envBindings.length,
+      baseUrl,
     };
   }
 
@@ -598,12 +616,15 @@ export class ConnectionsService {
       platformLabel: this.readPlatformLabel(config),
       config,
       envBindings: row.envBindings,
-      testHistory: row.testHistory.map((item) => ({
-        id: item.id,
-        status: item.success ? 'healthy' : 'failed',
-        testedAt: item.testedAt.toISOString(),
-        summaryMessage: item.success ? 'Connection test completed' : item.errorMessage ?? 'Connection test failed',
-      })),
+      testHistory: row.testHistory.map((item) => {
+        let status: string = item.success ? 'healthy' : 'failed';
+        let summaryMessage = item.success ? 'Connection test completed' : item.errorMessage ?? 'Connection test failed';
+        if (!item.success && item.errorMessage?.startsWith('[warning] ')) {
+          status = 'warning';
+          summaryMessage = item.errorMessage.slice('[warning] '.length);
+        }
+        return { id: item.id, status, testedAt: item.testedAt.toISOString(), summaryMessage };
+      }),
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };

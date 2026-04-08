@@ -19,10 +19,39 @@ ROUTES_BASE="/app/routes"
 
 log() { echo "[camel-runner] $*" >&2; }
 
+cleanup_file() {
+  local file_path="$1"
+  [[ -n "$file_path" && -f "$file_path" ]] && rm -f "$file_path"
+}
+
 send_json() {
   local status_code="$1" status_text="$2" json_body="$3"
   printf 'HTTP/1.1 %s %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s' \
     "$status_code" "$status_text" "${#json_body}" "$json_body"
+}
+
+validate_route_path() {
+  local route_file="$1"
+
+  if [[ -z "$route_file" ]]; then
+    return 1
+  fi
+
+  if [[ "$route_file" == *".."* ]] || [[ ! "$route_file" =~ ^/app/routes/[a-zA-Z0-9._-]+\.yaml$ ]]; then
+    return 1
+  fi
+
+  local resolved_path
+  resolved_path=$(realpath -m "$route_file" 2>/dev/null || echo "")
+  if [[ -z "$resolved_path" || "$resolved_path" != "$ROUTES_BASE"/* ]]; then
+    return 1
+  fi
+
+  if [[ ! -f "$route_file" ]]; then
+    return 1
+  fi
+
+  return 0
 }
 
 handle_request() {
@@ -45,7 +74,8 @@ handle_request() {
 
   body=""
   if [[ "$content_length" -gt 0 ]]; then
-    read -r -n "$content_length" body || true
+    # Read the exact request body byte count from the socket stream.
+    body="$(dd bs=1 count="$content_length" status=none 2>/dev/null || true)"
   fi
 
   # Health endpoint is unauthenticated
@@ -66,33 +96,81 @@ handle_request() {
     return
   fi
 
+  # Preview run endpoint: execute route and extract CB_PREVIEW_OUTPUT marker
+  if [[ "$method" == "POST" && "$path" == "/preview-run" ]]; then
+    local route_file route_yaml temp_route_file=""
+    route_file=$(echo "$body" | jq -r '.route // empty' 2>/dev/null || true)
+
+    if [[ -z "$route_file" ]]; then
+      route_yaml=$(echo "$body" | jq -r '.yaml // empty' 2>/dev/null || true)
+      if [[ -n "$route_yaml" ]]; then
+        # Create a temp file with a .yaml extension so Camel can detect the DSL
+        # format. Use a base path with no dots before the suffix so Camel parses
+        # the extension as "yaml" (it uses everything after the first dot).
+        local temp_stub
+        temp_stub="$(mktemp /tmp/cb-preview-XXXXXX)"
+        temp_route_file="${temp_stub}.yaml"
+        mv "$temp_stub" "$temp_route_file"
+        printf '%s' "$route_yaml" > "$temp_route_file"
+        route_file="$temp_route_file"
+      fi
+    fi
+
+    if [[ -z "$route_file" ]]; then
+      send_json 400 "Bad Request" '{"error":"either route or yaml is required"}'
+      return
+    fi
+
+    if [[ -z "$temp_route_file" ]] && ! validate_route_path "$route_file"; then
+      send_json 400 "Bad Request" '{"error":"invalid route path"}'
+      return
+    fi
+
+    log "Executing preview route: $route_file"
+    local output exit_code=0
+    output=$(camel run "$route_file" --max-messages=1 2>&1) || exit_code=$?
+    cleanup_file "$temp_route_file"
+
+    if [[ "$exit_code" -ne 0 ]]; then
+      local safe_output
+      safe_output=$(echo "$output" | tail -10 | jq -Rs . 2>/dev/null || echo '"see container logs"')
+      local fail
+      fail=$(jq -n --argjson code "$exit_code" --argjson output "$safe_output" '{"status":"failed","exitCode":$code,"error":"preview route failed","output":$output}')
+      send_json 500 "Internal Server Error" "$fail"
+      return
+    fi
+
+    local marker_line marker_payload
+    marker_line=$(echo "$output" | grep 'CB_PREVIEW_OUTPUT:' | tail -1 || true)
+    marker_payload="${marker_line#*CB_PREVIEW_OUTPUT:}"
+
+    if [[ -z "$marker_payload" ]]; then
+      local fail
+      fail=$(jq -n --arg out "$(echo "$output" | tail -10)" '{"status":"failed","error":"preview output marker not found","output":$out}')
+      send_json 500 "Internal Server Error" "$fail"
+      return
+    fi
+
+    if ! echo "$marker_payload" | jq -e . >/dev/null 2>&1; then
+      local fail
+      fail=$(jq -n --arg payload "$marker_payload" '{"status":"failed","error":"preview payload is not valid JSON","raw":$payload}')
+      send_json 500 "Internal Server Error" "$fail"
+      return
+    fi
+
+    local ok
+    ok=$(jq -n --argjson mappedPayload "$marker_payload" '{"status":"completed","mappedPayload":$mappedPayload}')
+    send_json 200 "OK" "$ok"
+    return
+  fi
+
   if [[ "$method" == "POST" && "$path" == "/run" ]]; then
     # Extract "route" field using jq (installed in container)
     local route_file
     route_file=$(echo "$body" | jq -r '.route // empty' 2>/dev/null || true)
 
-    # Validate route file path: must be non-empty, under ROUTES_BASE, and end in .yaml
-    if [[ -z "$route_file" ]]; then
-      send_json 400 "Bad Request" '{"error":"route field is required"}'
-      return
-    fi
-
-    # Reject path traversal sequences and non-.yaml files
-    if [[ "$route_file" == *".."* ]] || [[ ! "$route_file" =~ ^/app/routes/[a-zA-Z0-9._-]+\.yaml$ ]]; then
+    if ! validate_route_path "$route_file"; then
       send_json 400 "Bad Request" '{"error":"invalid route path"}'
-      return
-    fi
-
-    # Resolve and verify the path is within ROUTES_BASE
-    local resolved_path
-    resolved_path=$(realpath -m "$route_file" 2>/dev/null || echo "")
-    if [[ -z "$resolved_path" || "$resolved_path" != "$ROUTES_BASE"/* ]]; then
-      send_json 400 "Bad Request" '{"error":"route path outside allowed directory"}'
-      return
-    fi
-
-    if [[ ! -f "$route_file" ]]; then
-      send_json 400 "Bad Request" '{"error":"route file not found"}'
       return
     fi
 
@@ -121,7 +199,7 @@ handle_request() {
 
 handle_connection_test() {
   local body="$1"
-  local family config base_url auth_method timeout_ms
+  local family config base_url test_path test_method auth_method timeout_ms
   family=$(echo "$body" | jq -r '.family // empty' 2>/dev/null || true)
   config=$(echo "$body" | jq -r '.config // empty' 2>/dev/null || true)
 
@@ -131,6 +209,9 @@ handle_connection_test() {
   fi
 
   base_url=$(echo "$config" | jq -r '.baseUrl // empty' 2>/dev/null || true)
+  test_path=$(echo "$config" | jq -r '.testPath // empty' 2>/dev/null || true)
+  test_method=$(echo "$config" | jq -r '.testMethod // "GET"' 2>/dev/null || true)
+  test_method=$(echo "$test_method" | tr '[:lower:]' '[:upper:]')
   auth_method=$(echo "$config" | jq -r '.authMethod // "None"' 2>/dev/null || true)
   timeout_ms=$(echo "$config" | jq -r '.timeoutMs // 10000' 2>/dev/null || true)
   local timeout_secs=$(( (timeout_ms + 999) / 1000 ))
@@ -142,14 +223,46 @@ handle_connection_test() {
     return
   fi
 
-  log "Testing connection: family=$family auth=$auth_method url=$base_url"
+  if [[ "$test_method" != "GET" && "$test_method" != "HEAD" && "$test_method" != "POST" ]]; then
+    test_method="GET"
+  fi
+
+  local effective_base_url="$base_url"
+  # Runner executes in Docker. For local dev, localhost in Base URL refers to
+  # the container itself; rewrite to host.docker.internal so host services are reachable.
+  if [[ "$effective_base_url" == http://localhost* || "$effective_base_url" == https://localhost* ]]; then
+    effective_base_url="${effective_base_url/localhost/host.docker.internal}"
+  elif [[ "$effective_base_url" == http://127.0.0.1* || "$effective_base_url" == https://127.0.0.1* ]]; then
+    effective_base_url="${effective_base_url/127.0.0.1/host.docker.internal}"
+  fi
+
+  local test_url="$effective_base_url"
+  if [[ -n "$test_path" ]]; then
+    if [[ "$test_path" != /* ]]; then
+      test_path="/$test_path"
+    fi
+    if [[ "$effective_base_url" == */ && "$test_path" == /* ]]; then
+      test_url="${effective_base_url%/}$test_path"
+    else
+      test_url="$effective_base_url$test_path"
+    fi
+  else
+    # No test path: use GET to avoid side effects on root URL
+    if [[ "$test_method" != "GET" && "$test_method" != "HEAD" ]]; then
+      test_method="GET"
+      log "No testPath configured — falling back to GET for root URL check"
+    fi
+  fi
+
+  log "Testing connection: family=$family auth=$auth_method method=$test_method url=$test_url"
 
   local start_ms http_code curl_output curl_exit=0
   local access_token="" oauth_token_type="" oauth_expires_in=""
   start_ms=$(date +%s%3N 2>/dev/null || date +%s000)
 
   # Build curl args based on auth method
-  local -a curl_args=(-s -o /dev/null -w '%{http_code}' --max-time "$timeout_secs" -L)
+  local -a curl_args=(-s -o /dev/null -w '%{http_code}' --max-time "$timeout_secs" -L -X "$test_method"
+    -H "Accept: application/json")
 
   case "$auth_method" in
     "Bearer Token")
@@ -169,10 +282,10 @@ handle_connection_test() {
           curl_args+=(-H "$key_name: $key_value")
         else
           # For query placement, append to URL — handled below
-          if [[ "$base_url" == *"?"* ]]; then
-            base_url="${base_url}&${key_name}=${key_value}"
+          if [[ "$test_url" == *"?"* ]]; then
+            test_url="${test_url}&${key_name}=${key_value}"
           else
-            base_url="${base_url}?${key_name}=${key_value}"
+            test_url="${test_url}?${key_name}=${key_value}"
           fi
         fi
       fi
@@ -207,7 +320,8 @@ handle_connection_test() {
             local cp_key cp_val
             cp_key=$(echo "$config" | jq -r ".customAuthParams[$idx].key // empty" 2>/dev/null || true)
             cp_val=$(echo "$config" | jq -r ".customAuthParams[$idx].value // empty" 2>/dev/null || true)
-            if [[ -n "$cp_key" ]]; then
+            # Skip keys already set by the built-in OAuth flow to avoid duplicates
+            if [[ -n "$cp_key" && "$cp_key" != "grant_type" && "$cp_key" != "client_id" && "$cp_key" != "client_secret" && "$cp_key" != "scope" ]]; then
               token_data="${token_data}&${cp_key}=${cp_val}"
             fi
           done
@@ -283,8 +397,8 @@ handle_connection_test() {
     fi
   fi
 
-  # Execute the health check against base URL
-  http_code=$(curl "${curl_args[@]}" "$base_url" 2>/dev/null) || curl_exit=$?
+  # Execute the check against the configured test URL/method.
+  http_code=$(curl "${curl_args[@]}" "$test_url" 2>/dev/null) || curl_exit=$?
 
   local end_ms
   end_ms=$(date +%s%3N 2>/dev/null || date +%s000)
@@ -302,41 +416,79 @@ handle_connection_test() {
 
   if [[ "$curl_exit" -ne 0 ]]; then
     send_json 200 "OK" "$(jq -n \
-      --arg msg "Cannot reach $base_url (curl exit $curl_exit)" \
+      --arg msg "Cannot reach $test_url (curl exit $curl_exit)" \
       --argjson lat "$latency" \
       --arg fam "$family" \
-      --arg url "$base_url" \
+      --arg url "$test_url" \
+      --arg base "$base_url" \
+      --arg resolvedBase "$effective_base_url" \
+      --arg method "$test_method" \
       "${oauth_detail_args[@]}" \
-      '{status:"failed",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$url,curlExit:'"$curl_exit"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
+      '{status:"failed",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$base,resolvedBaseUrl:$resolvedBase,testUrl:$url,testMethod:$method,curlExit:'"$curl_exit"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
     return
   fi
 
   log "Connection test result: HTTP $http_code in ${latency}ms"
+
+  # When OAuth token was acquired but no testPath was given, authentication is
+  # verified regardless of what the bare root URL returns — report healthy.
+  if [[ -n "${access_token:-}" && -z "$test_path" ]]; then
+    log "OAuth token acquired; no testPath configured — reporting healthy (root HTTP $http_code ignored)"
+    send_json 200 "OK" "$(jq -n \
+      --arg msg "OAuth authentication successful — credentials verified" \
+      --argjson lat "$latency" \
+      --arg fam "$family" \
+      --arg url "$test_url" \
+      --arg base "$base_url" \
+      --arg resolvedBase "$effective_base_url" \
+      --arg method "$test_method" \
+      "${oauth_detail_args[@]}" \
+      '{status:"healthy",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$base,resolvedBaseUrl:$resolvedBase,testUrl:$url,testMethod:$method,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
+    return
+  fi
 
   if [[ "$http_code" -ge 200 && "$http_code" -lt 400 ]]; then
     send_json 200 "OK" "$(jq -n \
       --arg msg "Connection successful (HTTP $http_code)" \
       --argjson lat "$latency" \
       --arg fam "$family" \
-      --arg url "$base_url" \
+      --arg url "$test_url" \
+      --arg base "$base_url" \
+      --arg resolvedBase "$effective_base_url" \
+      --arg method "$test_method" \
       "${oauth_detail_args[@]}" \
-      '{status:"healthy",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$url,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
+      '{status:"healthy",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$base,resolvedBaseUrl:$resolvedBase,testUrl:$url,testMethod:$method,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
   elif [[ "$http_code" -ge 400 && "$http_code" -lt 500 ]]; then
+    local warning_msg="Server returned HTTP $http_code"
+    if [[ "$http_code" -eq 401 || "$http_code" -eq 403 ]]; then
+      warning_msg="Server returned HTTP $http_code — check credentials or auth configuration"
+    elif [[ "$http_code" -eq 404 ]]; then
+      warning_msg="Server returned HTTP 404 — verify Base URL and Test Path"
+    else
+      warning_msg="Server returned HTTP $http_code — verify endpoint path and request configuration"
+    fi
+
     send_json 200 "OK" "$(jq -n \
-      --arg msg "Server returned HTTP $http_code — check credentials or auth configuration" \
+      --arg msg "$warning_msg" \
       --argjson lat "$latency" \
       --arg fam "$family" \
-      --arg url "$base_url" \
+      --arg url "$test_url" \
+      --arg base "$base_url" \
+      --arg resolvedBase "$effective_base_url" \
+      --arg method "$test_method" \
       "${oauth_detail_args[@]}" \
-      '{status:"warning",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$url,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
+      '{status:"warning",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$base,resolvedBaseUrl:$resolvedBase,testUrl:$url,testMethod:$method,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
   else
     send_json 200 "OK" "$(jq -n \
       --arg msg "Server returned HTTP $http_code" \
       --argjson lat "$latency" \
       --arg fam "$family" \
-      --arg url "$base_url" \
+      --arg url "$test_url" \
+      --arg base "$base_url" \
+      --arg resolvedBase "$effective_base_url" \
+      --arg method "$test_method" \
       "${oauth_detail_args[@]}" \
-      '{status:"failed",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$url,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
+      '{status:"failed",summaryMessage:$msg,latencyMs:$lat,details:({family:$fam,baseUrl:$base,resolvedBaseUrl:$resolvedBase,testUrl:$url,testMethod:$method,httpStatus:'"$http_code"'} + (if $ARGS.named.bearerToken then {bearerToken:$ARGS.named.bearerToken,tokenType:$ARGS.named.tokenType} + (if $ARGS.named.expiresIn then {expiresIn:$ARGS.named.expiresIn} else {} end) else {} end))}')"
   fi
 }
 
@@ -349,5 +501,5 @@ export PORT RUNNER_SECRET ROUTES_BASE
 
 # Use socat to listen; Alpine-compatible, forks per connection
 while true; do
-  socat TCP-LISTEN:"$PORT",reuseaddr,fork EXEC:"/bin/bash -c handle_request" 2>/dev/null || true
+  socat TCP-LISTEN:"$PORT",reuseaddr,fork EXEC:"/bin/bash -c handle_request" 2>&1 || true
 done

@@ -2,6 +2,8 @@
 /*  Integration Builder – Types (Wireframe v5 enterprise studio)      */
 /* ------------------------------------------------------------------ */
 
+import { type WorkflowNodeKey } from '@/lib/workflow-node-icons';
+
 export const BUILDER_STEPS = [
   'trigger',
   'sourceGroup',
@@ -19,7 +21,7 @@ export type StepStatus = 'not-started' | 'in-progress' | 'complete' | 'warning' 
 export interface StepMeta {
   id: BuilderStepId;
   label: string;
-  icon: string;
+  nodeKey: WorkflowNodeKey;
   status: StepStatus;
 }
 
@@ -49,6 +51,7 @@ export interface SourceConfig {
   operation: string;
   endpointPath: string;
   queryParams: KeyValueEntry[];
+  headers: KeyValueEntry[];
   customParams: KeyValueEntry[];
   paginationEnabled: boolean;
   paginationStrategy: 'Offset' | 'Cursor' | 'None';
@@ -77,6 +80,7 @@ export interface MappingField {
   transform: string;
   required: boolean;
   classification?: 'public' | 'internal' | 'confidential' | 'restricted';
+  transformConfig?: string;
 }
 
 export interface MappingConfig {
@@ -86,20 +90,45 @@ export interface MappingConfig {
 }
 
 export type ValidationSeverity = 'Error' | 'Warning' | 'Info';
-export type ValidationOnFailure = 'Reject Record' | 'Skip Record' | 'Flag & Continue';
+
+export type ValidationOperator =
+  | 'IS_NOT_EMPTY'
+  | 'EQUALS'
+  | 'NOT_EQUALS'
+  | 'GREATER_THAN'
+  | 'LESS_THAN'
+  | 'IN'
+  | 'NOT_IN'
+  | 'MATCHES'
+  | 'LENGTH_MIN'
+  | 'LENGTH_MAX';
+
+export type ValidationRuleSource = 'auto' | 'manual';
 
 export interface ValidationRule {
   id: string;
   name: string;
-  condition: string;
+  field: string;
+  operator: ValidationOperator;
+  value: string | string[];
   severity: ValidationSeverity;
-  onFailure: ValidationOnFailure;
   enabled: boolean;
+  source: ValidationRuleSource;
+}
+
+export interface ValidationErrorConfig {
+  logEnabled: boolean;
+  dlqEnabled: boolean;
+  dlqTopic: string;
+  notifyChannel: 'Email' | 'Slack' | 'Teams' | 'None';
+  notifyRecipients: string;
+  includeRecordData: boolean;
 }
 
 export interface ValidationConfig {
   rules: ValidationRule[];
   policyMode: 'Balanced' | 'Strict' | 'Lenient';
+  errorConfig: ValidationErrorConfig;
 }
 
 export type WriteMode = 'Create' | 'Upsert' | 'Update';
@@ -125,9 +154,24 @@ export interface TargetDestination extends TargetConfig {
   priority: number;
 }
 
+export type TargetProfileStatus = 'none' | 'baseline-only' | 'profile-ready' | 'overlay-active' | 'drift-suspected';
+
+export interface TargetProfileState {
+  profileId: string;
+  profileName: string;
+  system: string;
+  object: string;
+  isPublished: boolean;
+  status: TargetProfileStatus;
+  effectiveFieldCount: number;
+  effectiveRequiredCount: number;
+  currentVersionId: string | null;
+}
+
 export interface TargetGroupConfig {
   targets: TargetDestination[];
   deliveryPattern: 'Single Target' | 'Fan-out to Multiple Targets' | 'Scatter-Gather';
+  targetProfileState: TargetProfileState | null;
 }
 
 export interface ResponseHandlingConfig {
@@ -213,6 +257,28 @@ export function isSourceComplete(s: SourceGroupConfig): boolean {
 export function isMappingComplete(m: MappingConfig): boolean {
   return m.mappings.length > 0 && m.unmappedTargetFields.length === 0;
 }
+
+export const DEFAULT_ERROR_CONFIG: ValidationErrorConfig = {
+  logEnabled: true,
+  dlqEnabled: false,
+  dlqTopic: '',
+  notifyChannel: 'None',
+  notifyRecipients: '',
+  includeRecordData: false,
+};
+
+export const VALIDATION_OPERATORS: { value: ValidationOperator; label: string; needsValue: boolean }[] = [
+  { value: 'IS_NOT_EMPTY', label: 'is not empty', needsValue: false },
+  { value: 'EQUALS', label: 'equals', needsValue: true },
+  { value: 'NOT_EQUALS', label: 'not equals', needsValue: true },
+  { value: 'GREATER_THAN', label: 'greater than', needsValue: true },
+  { value: 'LESS_THAN', label: 'less than', needsValue: true },
+  { value: 'IN', label: 'in list', needsValue: true },
+  { value: 'NOT_IN', label: 'not in list', needsValue: true },
+  { value: 'MATCHES', label: 'matches regex', needsValue: true },
+  { value: 'LENGTH_MIN', label: 'min length', needsValue: true },
+  { value: 'LENGTH_MAX', label: 'max length', needsValue: true },
+];
 
 export function isValidationComplete(v: ValidationConfig): boolean {
   return v.rules.length > 0;

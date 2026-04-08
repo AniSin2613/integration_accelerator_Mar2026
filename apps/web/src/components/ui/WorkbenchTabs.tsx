@@ -18,26 +18,28 @@ export function WorkbenchTabs({ activeTab, onTabChange }: WorkbenchTabsProps) {
   const tabs: WorkbenchTabId[] = ['design', 'output', 'validation', 'test'];
 
   return (
-    <div className="flex items-center gap-0 px-5 border-t border-border-soft/60 bg-slate-50/40" role="tablist" aria-label="Workbench tabs">
-      {tabs.map((tab) => {
-        const isActive = tab === activeTab;
-        return (
-          <button
-            key={tab}
-            type="button"
-            role="tab"
-            aria-selected={isActive}
-            onClick={() => onTabChange(tab)}
-            className={`px-3 py-1.5 text-[11px] transition-colors border-b-2 ${
-              isActive
-                ? 'font-semibold text-primary border-primary'
-                : 'font-medium text-text-muted hover:text-text-main border-transparent'
-            }`}
-          >
-            {TAB_LABELS[tab]}
-          </button>
-        );
-      })}
+    <div className="px-5 border-t border-b border-border-soft bg-slate-50/40" role="tablist" aria-label="Workbench tabs">
+      <div className="flex items-stretch gap-1 overflow-x-auto py-1.5 whitespace-nowrap scrollbar-thin">
+        {tabs.map((tab) => {
+          const isActive = tab === activeTab;
+          return (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onTabChange(tab)}
+              className={`relative rounded-md border px-3 py-1.5 text-[11px] transition-colors ${
+                isActive
+                  ? 'font-semibold text-primary border-primary/30 bg-primary/10'
+                  : 'font-medium text-text-muted border-transparent hover:border-border-soft hover:bg-white/80 hover:text-text-main'
+              }`}
+            >
+              {TAB_LABELS[tab]}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

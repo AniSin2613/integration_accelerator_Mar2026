@@ -21,9 +21,9 @@ interface MappingRowProps {
 }
 
 const confidenceColor = (c: number) => {
-  if (c >= 0.85) return 'text-success';
-  if (c >= 0.65) return 'text-warning';
-  return 'text-danger';
+  if (c >= 0.85) return 'text-ai';
+  if (c >= 0.65) return 'text-ai-text';
+  return 'text-ai-text/60';
 };
 
 const statusStyle: Record<string, string> = {

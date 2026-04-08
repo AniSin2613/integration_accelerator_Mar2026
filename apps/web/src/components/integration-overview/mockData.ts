@@ -5,9 +5,9 @@ import { type IntegrationOverviewData, type IntegrationOverviewViewState, type E
 const baseWorkflowBlocks: IntegrationOverviewData['workflowBlocks'] = [
   {
     id: 'trigger',
+    nodeKey: 'trigger',
     title: 'Trigger',
     subtitle: 'Scheduled (every 15 min)',
-    icon: 'schedule',
     detailRows: [
       { label: 'Trigger Type', value: 'Scheduled' },
       { label: 'Frequency', value: 'Every 15 minutes' },
@@ -16,9 +16,9 @@ const baseWorkflowBlocks: IntegrationOverviewData['workflowBlocks'] = [
   },
   {
     id: 'source',
+    nodeKey: 'source',
     title: 'Source Connection',
     subtitle: 'Coupa Invoices API',
-    icon: 'download',
     detailRows: [
       { label: 'Connection', value: 'Coupa Production API' },
       { label: 'Auth', value: 'OAuth 2.0' },
@@ -27,9 +27,9 @@ const baseWorkflowBlocks: IntegrationOverviewData['workflowBlocks'] = [
   },
   {
     id: 'mapping',
+    nodeKey: 'mapping',
     title: 'Mapping & Transform',
     subtitle: '42 mappings, 6 transforms',
-    icon: 'schema',
     detailRows: [
       { label: 'Mappings', value: '42 fields' },
       { label: 'Transforms', value: '6 rules' },
@@ -38,9 +38,9 @@ const baseWorkflowBlocks: IntegrationOverviewData['workflowBlocks'] = [
   },
   {
     id: 'validation',
+    nodeKey: 'validation',
     title: 'Validation Logic',
     subtitle: '3 required checks',
-    icon: 'rule',
     detailRows: [
       { label: 'Rules', value: '3 active rules' },
       { label: 'Failure Handling', value: 'Replay queue + alert' },
@@ -49,9 +49,9 @@ const baseWorkflowBlocks: IntegrationOverviewData['workflowBlocks'] = [
   },
   {
     id: 'target',
+    nodeKey: 'target',
     title: 'Target Connection',
     subtitle: 'SAP Invoice Endpoint',
-    icon: 'upload',
     detailRows: [
       { label: 'Connection', value: 'SAP S/4 PROD' },
       { label: 'Method', value: 'POST' },
@@ -60,9 +60,9 @@ const baseWorkflowBlocks: IntegrationOverviewData['workflowBlocks'] = [
   },
   {
     id: 'monitoring',
+    nodeKey: 'monitoring',
     title: 'Monitoring',
     subtitle: 'Alerts + run telemetry',
-    icon: 'monitoring',
     detailRows: [
       { label: 'Alert Channel', value: 'AP Ops Slack' },
       { label: 'Error Threshold', value: '>2% failures' },

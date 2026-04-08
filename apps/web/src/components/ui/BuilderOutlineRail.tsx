@@ -1,15 +1,12 @@
 'use client';
 
 import { type BuilderStepId, type StepMeta, type StepStatus } from '@/components/builder/types';
+import { WorkflowNodeIcon } from '@/components/ui/WorkflowNodeIcon';
+import { getWorkflowNodeIconByKey } from '@/lib/workflow-node-icons';
 
 /* ------------------------------------------------------------------ */
 /*  BuilderOutlineRail – slim build navigator with labels              */
 /* ------------------------------------------------------------------ */
-
-const STEP_ICONS: Record<BuilderStepId, string> = {
-  trigger: 'bolt', sourceGroup: 'cloud_download', mapping: 'schema',
-  validation: 'rule', targetGroup: 'cloud_upload', responseHandling: 'reply', operations: 'monitoring',
-};
 
 const STEP_SHORT: Record<BuilderStepId, string> = {
   trigger: 'Trigger', sourceGroup: 'Sources', mapping: 'Mapping',
@@ -67,7 +64,12 @@ export function BuilderOutlineRail({ steps, activeStep, onSelectStep }: BuilderO
               )}
 
               <div className="relative">
-                <span className={`material-symbols-outlined text-[18px] ${isActive ? 'text-primary' : isComplete ? 'text-success' : ''}`}>{STEP_ICONS[step.id]}</span>
+                <WorkflowNodeIcon
+                  kind={getWorkflowNodeIconByKey(step.id)}
+                  size={18}
+                  className={isActive ? 'text-primary' : isComplete ? 'text-success' : 'text-text-muted'}
+                  accentColor="#BF2D42"
+                />
                 {/* Status dot */}
                 <span className={`absolute -top-0.5 -right-1 flex h-[10px] w-[10px] items-center justify-center rounded-full ${si.dot} ${si.ring}`}>
                   {si.icon && <span className="material-symbols-outlined text-white text-[7px] font-bold">{si.icon}</span>}

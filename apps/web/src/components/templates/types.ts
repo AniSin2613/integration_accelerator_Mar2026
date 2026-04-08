@@ -29,7 +29,9 @@ export type TemplateTargetFilter =
   | 'Dynamics'
   | 'REST API'
   | 'File'
-  | 'DB';
+  | 'DB'
+  | 'Demo JSON'
+  | 'Demo XML';
 
 export type TemplateUseCaseFilter =
   | 'All Use Cases'

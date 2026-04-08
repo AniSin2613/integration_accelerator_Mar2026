@@ -25,7 +25,7 @@ export class MappingsService {
   async findByIntegration(integrationDefId: string) {
     const sets = await this.prisma.mappingSet.findMany({
       where: { integrationDefId },
-      include: { rules: { orderBy: { sourceField: 'asc' } } },
+      include: { rules: { orderBy: { sortOrder: 'asc' } } },
       orderBy: { version: 'desc' },
     });
 
@@ -35,7 +35,7 @@ export class MappingsService {
   async findLatest(integrationDefId: string) {
     const set = await this.prisma.mappingSet.findFirst({
       where: { integrationDefId },
-      include: { rules: { orderBy: { sourceField: 'asc' } } },
+      include: { rules: { orderBy: { sortOrder: 'asc' } } },
       orderBy: { version: 'desc' },
     });
     if (!set) throw new NotFoundException('No mapping set found');
@@ -55,7 +55,7 @@ export class MappingsService {
         integrationDefId,
         version: nextVersion,
         rules: {
-          create: dto.rules.map((r) => {
+          create: dto.rules.map((r, idx) => {
             const evidenceSources = normalizeEvidenceSources(r.aiEvidenceSources, r.aiEvidenceSource);
 
             // Zero-trust rule: AI-proposed mappings must carry provenance categories.
@@ -69,6 +69,7 @@ export class MappingsService {
               sourceField: r.sourceField,
               targetField: r.targetField,
               mappingType: r.mappingType ?? 'DIRECT',
+              sortOrder: idx,
               transformConfig: mergeEvidenceMetadata(r.transformConfig, r.aiEvidenceReferences) as Prisma.InputJsonValue | undefined,
               // All new rules start as PENDING_REVIEW regardless of source
               status: 'PENDING_REVIEW',

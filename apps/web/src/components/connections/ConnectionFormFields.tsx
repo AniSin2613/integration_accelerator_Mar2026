@@ -62,6 +62,19 @@ function RestEditor({
       <p className="text-sm font-semibold text-text-main">REST / OpenAPI Settings</p>
       <div className="mt-3 grid grid-cols-1 gap-3">
         <TextField label="Base URL" value={config.baseUrl} onChange={(v) => onChange({ baseUrl: v })} required />
+        <TextField
+          label="Test Path (optional)"
+          value={config.testPath ?? ''}
+          onChange={(v) => onChange({ testPath: v || undefined })}
+          placeholder="/health or /invoices"
+        />
+        <SelectField
+          label="Test Method"
+          value={config.testMethod ?? 'GET'}
+          options={['GET', 'HEAD', 'POST']}
+          onChange={(v) => onChange({ testMethod: v as 'GET' | 'HEAD' | 'POST' })}
+          required
+        />
         <SelectField
           label="Auth Method"
           value={config.authMethod}
@@ -268,6 +281,8 @@ export function labelValueRows(config: ConnectionConfig, lastBearerToken?: strin
   if (config.family === 'REST / OpenAPI outbound') {
     const rows: Array<{ label: string; value: string }> = [
       { label: 'Base URL', value: config.baseUrl || '--' },
+      { label: 'Test Path', value: config.testPath || '--' },
+      { label: 'Test Method', value: config.testMethod || 'GET' },
       { label: 'Auth Method', value: config.authMethod },
     ];
     if (config.authMethod === 'API Key') {

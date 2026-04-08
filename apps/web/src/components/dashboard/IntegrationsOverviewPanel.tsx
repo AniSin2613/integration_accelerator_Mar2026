@@ -62,8 +62,8 @@ export function IntegrationsOverviewPanel({ rows }: IntegrationsOverviewPanelPro
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex items-center justify-end gap-3">
-                      <Link href="/integrations" className="text-[12px] font-medium text-primary hover:underline">View</Link>
-                      <Link href="/monitoring" className="text-[12px] font-medium text-primary hover:underline">Open Monitoring</Link>
+                      <Link href={`/integrations/${row.id}`} className="text-[12px] font-medium text-primary hover:underline">View</Link>
+                      <Link href={`/integrations/${row.id}/builder`} className="text-[12px] font-medium text-primary hover:underline">Open Builder</Link>
                     </div>
                   </td>
                 </tr>
