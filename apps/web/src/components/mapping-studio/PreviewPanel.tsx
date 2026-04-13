@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 
 interface MappingField {
   id: string;
@@ -24,35 +25,45 @@ interface StudioSchemaField {
 }
 
 interface PreviewPanelProps {
-  mappings: MappingField[];
-  sourceSchema: StudioSchemaField[];
-  targetSchema: StudioSchemaField[];
+  mappings?: MappingField[];
+  sourceSchema?: StudioSchemaField[];
+  targetSchema?: StudioSchemaField[];
   sourcePayload?: unknown;
   targetPayload?: Record<string, unknown> | null;
   sourceError?: string | null;
   targetError?: string | null;
   loading?: boolean;
-  selectedMappingId: string | null;
+  selectedMappingId?: string | null;
   onClose: () => void;
   sourceUsed?: number;
   sourceTotal?: number;
+  /** ISO timestamp of last preview run */
+  previewedAt?: string | null;
+  /** Callback to refresh the preview; shows a refresh button in header when provided */
+  onRefresh?: () => void;
+  /** Whether a refresh is currently in progress */
+  refreshing?: boolean;
 }
 
 export function PreviewPanel({
-  mappings,
-  sourceSchema,
-  targetSchema,
+  mappings = [],
+  sourceSchema = [],
+  targetSchema = [],
   sourcePayload,
   targetPayload,
   sourceError,
   targetError,
   loading,
-  selectedMappingId,
+  selectedMappingId = null,
   onClose,
   sourceUsed,
   sourceTotal,
+  previewedAt,
+  onRefresh,
+  refreshing,
 }: PreviewPanelProps) {
   const [copiedSection, setCopiedSection] = useState<string | null>(null);
+  const hasSchemas = sourceSchema.length > 0 || targetSchema.length > 0;
 
   const selectedMapping = mappings.find(m => m.id === selectedMappingId);
 
@@ -133,7 +144,7 @@ export function PreviewPanel({
     setTimeout(() => setCopiedSection(null), 2000);
   };
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 sm:p-6" role="dialog" aria-modal="true" aria-label="Preview Output">
       <button
         type="button"
@@ -160,7 +171,23 @@ export function PreviewPanel({
               </span>
             )}
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
+            {previewedAt && (
+              <span className="text-[10px] text-text-muted">
+                Last run: {new Date(previewedAt).toLocaleString()}
+              </span>
+            )}
+            {onRefresh && (
+              <button
+                type="button"
+                onClick={onRefresh}
+                disabled={refreshing}
+                className="inline-flex h-8 items-center gap-1 rounded-lg border border-border-soft bg-white/70 px-2.5 text-[11px] font-medium text-text-muted transition-colors hover:bg-white hover:text-text-main disabled:opacity-50"
+              >
+                <span className={`material-symbols-outlined text-[14px] ${refreshing ? 'animate-spin' : ''}`}>{refreshing ? 'progress_activity' : 'refresh'}</span>
+                {refreshing ? 'Running…' : 'Refresh'}
+              </button>
+            )}
             <button
               type="button"
               onClick={onClose}
@@ -174,7 +201,7 @@ export function PreviewPanel({
 
         {/* Content */}
         <div className="relative h-[calc(100%-57px)] overflow-y-auto p-4 scrollbar-thin">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+          <div className={`grid grid-cols-1 gap-3 ${hasSchemas ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}>
             {/* Source */}
             <div>
               <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Source Payload</h3>
@@ -219,7 +246,8 @@ export function PreviewPanel({
           </div>
             </div>
 
-            {/* Issues */}
+            {/* Issues — only shown when schema context is available */}
+            {hasSchemas && (
             <div>
               <h3 className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-muted">Issues</h3>
               <div className="rounded-lg border border-border-soft bg-background-light p-2.5 space-y-1.5 max-h-[58vh] overflow-y-auto">
@@ -270,9 +298,11 @@ export function PreviewPanel({
             )}
               </div>
             </div>
+            )}
           </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

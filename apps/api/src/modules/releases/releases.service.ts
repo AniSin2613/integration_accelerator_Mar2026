@@ -11,6 +11,24 @@ import { AuditService } from '../audit/audit.service';
 import { CreateReleaseDto } from './dto/create-release.dto';
 import { SubmitApprovalDto } from './dto/submit-approval.dto';
 
+function readNonEmptyString(value: unknown): string | null {
+  if (typeof value === 'string' && value.trim().length > 0) {
+    return value.trim();
+  }
+  return null;
+}
+
+function readKeyValueEntries(value: unknown): Array<{ key: string; value: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+    .map((entry) => ({
+      key: String(entry.key ?? '').trim(),
+      value: String(entry.value ?? ''),
+    }))
+    .filter((entry) => entry.key.length > 0);
+}
+
 @Injectable()
 export class ReleasesService {
   private readonly logger = new Logger(ReleasesService.name);
@@ -110,13 +128,23 @@ export class ReleasesService {
 
     // Generate Camel YAML — REST-to-REST for the vertical slice template
     // In future phases this will dispatch to template-specific builders
+    const rhState = (integration.responseHandlingState as Record<string, unknown>) ?? {};
+    const opsState = (integration.operationsState as Record<string, unknown>) ?? {};
+    const sourceState = (integration.sourceState as Record<string, unknown>) ?? {};
+    const targetState = (integration.targetState as Record<string, unknown>) ?? {};
+    const primarySource = (sourceState.primary as Record<string, unknown>) ?? {};
+    const primaryTarget = (Array.isArray(targetState.targets) ? targetState.targets[0] : null) as Record<string, unknown> | null;
     const camelYaml = this.camel.generateRestToRestYaml({
       routeId: `${integrationDefId}-v${dto.version}`,
       description: `${integration.name} — v${dto.version}`,
       sourceBaseUrl: 'https://{{source.base-url}}',
-      sourcePath: '{{source.path}}',
+      sourcePath: readNonEmptyString(primarySource.endpointPath) ?? '{{source.path}}',
+      sourceMethod: readNonEmptyString(primarySource.operation) ?? 'GET',
+      sourceQueryParams: readKeyValueEntries(primarySource.queryParams),
       targetBaseUrl: 'https://{{target.base-url}}',
-      targetPath: '{{target.path}}',
+      targetPath: readNonEmptyString(primaryTarget?.endpointPath) ?? '{{target.path}}',
+      targetMethod: readNonEmptyString(primaryTarget?.operation) ?? 'POST',
+      targetQueryParams: readKeyValueEntries(primaryTarget?.params),
       httpMethod: 'POST',
       fieldMappings: approvedSet.rules.map((r) => ({
         sourceField: r.sourceField,
@@ -124,6 +152,23 @@ export class ReleasesService {
         transformType: (r.transformConfig as any)?.type,
         transformConfig: r.transformConfig as Record<string, unknown>,
       })),
+      responseHandling: {
+        successCriteria: (rhState.successCriteria as 'any_success' | 'only_2xx') ?? 'any_success',
+        // Failure recovery fields now sourced from operationsState; fall back to rhState for legacy data
+        failureBehavior: (opsState.failureBehavior ?? rhState.failureBehavior ?? 'retry') as 'retry' | 'stop' | 'error_queue' | 'notify_only',
+        retryAttempts: Number(opsState.retryAttempts ?? rhState.retryAttempts ?? 3),
+        retryInterval: String(opsState.retryInterval ?? rhState.retryInterval ?? '5 min'),
+        partialSuccessPolicy: (opsState.partialSuccessPolicy ?? rhState.partialSuccessPolicy ?? 'fail_entire_transaction') as 'fail_entire_transaction' | 'allow_partial_success',
+        outputToSource: (rhState.outputToSource as 'auto_if_expected' | 'no_response') ?? 'auto_if_expected',
+        notificationEnabled: Boolean(rhState.notificationEnabled ?? rhState.callbackEnabled),
+        notificationOnSuccess: Boolean(rhState.notificationOnSuccess ?? rhState.callbackOnSuccess),
+        notificationOnFailure: Boolean(rhState.notificationOnFailure ?? rhState.callbackOnFailure),
+        notificationDestinationUrl: String(rhState.notificationDestinationUrl ?? rhState.callbackDestination ?? ''),
+        notificationMethod: String(rhState.notificationMethod ?? rhState.callbackMethod ?? 'POST'),
+        notificationPayloadMode: (rhState.notificationPayloadMode as 'standard_response' | 'custom_payload') ?? 'standard_response',
+        loggingLevel: (rhState.loggingLevel as 'Minimal' | 'Standard' | 'Verbose') ?? 'Standard',
+        debugMode: Boolean(rhState.debugMode),
+      },
     });
 
     return this.prisma.releaseArtifact.create({

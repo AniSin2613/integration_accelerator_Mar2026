@@ -17,6 +17,7 @@ export type TemplateSourceFilter =
   | 'All Sources'
   | 'Coupa'
   | 'GEP'
+  | 'REST'
   | 'REST API'
   | 'File'
   | 'DB'
@@ -25,11 +26,15 @@ export type TemplateSourceFilter =
 export type TemplateTargetFilter =
   | 'All Targets'
   | 'SAP'
+  | 'Coupa'
   | 'ERP'
   | 'Dynamics'
+  | 'REST'
   | 'REST API'
   | 'File'
   | 'DB'
+  | 'JSON File'
+  | 'XML File'
   | 'Demo JSON'
   | 'Demo XML';
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { StudioHeader } from '@/components/mapping-studio/StudioHeader';
 import { MappingHealthStrip } from '@/components/mapping/MappingHealthStrip';
@@ -15,6 +15,7 @@ interface PreviewPayloadResponse {
   targetPayload: Record<string, unknown> | null;
   sourceError?: string | null;
   targetError?: string | null;
+  previewedAt?: string | null;
   mappingSetId?: string | null;
   mappingVersion?: number | null;
   mappingRuleCount?: number;
@@ -227,6 +228,63 @@ function buildSchemaFromRules(rules: ApiMappingRule[], side: 'source' | 'target'
   return uniqueByPath(fields);
 }
 
+function formatTransformConfigForEditor(raw: unknown): string | undefined {
+  const unwrapNestedText = (value: unknown, preferredKeys: string[] = ['expression', 'rule', 'filter', 'value', 'constant'], depth = 0): string | undefined => {
+    if (depth > 12 || value == null) return undefined;
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return undefined;
+      if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+        try {
+          return unwrapNestedText(JSON.parse(trimmed), preferredKeys, depth + 1) ?? trimmed;
+        } catch {
+          return trimmed;
+        }
+      }
+      return trimmed;
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const record = value as Record<string, unknown>;
+    for (const key of preferredKeys) {
+      const unwrapped = unwrapNestedText(record[key], preferredKeys, depth + 1);
+      if (unwrapped) return unwrapped;
+    }
+    return undefined;
+  };
+
+  if (raw == null) return undefined;
+
+  let cfg: unknown = raw;
+  if (typeof cfg === 'string') {
+    const trimmed = cfg.trim();
+    if (!trimmed) return undefined;
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        cfg = JSON.parse(trimmed);
+      } catch {
+        return trimmed;
+      }
+    } else {
+      return trimmed;
+    }
+  }
+
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return undefined;
+  const record = cfg as Record<string, unknown>;
+  const type = String(record.type ?? '').toLowerCase();
+
+  if (type === 'constant') return unwrapNestedText(record.value, ['value', 'constant']) ?? String(record.value ?? '');
+  if (type === 'conditional' || type === 'formula' || type === 'filter') return unwrapNestedText(record, ['expression', 'rule', 'filter']) ?? '';
+  if (type === 'dateformat') return `${String(record.fromFormat ?? 'YYYY-MM-DD')}|${String(record.toFormat ?? 'YYYY-MM-DD')}`;
+  if (type === 'concat') return String(record.separator ?? ' ');
+  if (type === 'lookup') {
+    if (record.table && typeof record.table === 'object') return JSON.stringify(record.table);
+    return unwrapNestedText(record, ['expression']) ?? '';
+  }
+
+  return JSON.stringify(record);
+}
+
 function normalizeMappingConfig(raw: unknown): MappingConfig {
   if (raw && typeof raw === 'object' && Array.isArray((raw as MappingConfig).mappings)) {
     const cfg = raw as MappingConfig;
@@ -271,11 +329,7 @@ function normalizeMappingConfig(raw: unknown): MappingConfig {
           return 'direct';
         })(),
         required: Boolean(rule.required),
-        transformConfig: typeof rule.transformConfig === 'string'
-          ? rule.transformConfig
-          : rule.transformConfig && typeof rule.transformConfig === 'object'
-            ? JSON.stringify(rule.transformConfig)
-            : undefined,
+        transformConfig: formatTransformConfigForEditor(rule.transformConfig),
       }));
     return { mappings, unmappedSourceFields: [], unmappedTargetFields: [] };
   }
@@ -665,31 +719,24 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
     loadData();
   }, [integrationId]);
 
+  const loadPreview = useCallback(async () => {
+    try {
+      setPreviewLoading(true);
+      setPreviewRequestError(null);
+      const result = await api.get<PreviewPayloadResponse>(`/integrations/${integrationId}/preview-payloads`);
+      setPreviewPayloads(result);
+    } catch (error) {
+      setPreviewPayloads(null);
+      setPreviewRequestError(error instanceof Error ? error.message : 'Failed to load preview payloads');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [integrationId]);
+
   useEffect(() => {
     if (!previewOpen) return;
-
-    let cancelled = false;
-    const loadPreview = async () => {
-      try {
-        setPreviewLoading(true);
-        setPreviewRequestError(null);
-        const result = await api.get<PreviewPayloadResponse>(`/integrations/${integrationId}/preview-payloads`);
-        if (!cancelled) setPreviewPayloads(result);
-      } catch (error) {
-        if (!cancelled) {
-          setPreviewPayloads(null);
-          setPreviewRequestError(error instanceof Error ? error.message : 'Failed to load preview payloads');
-        }
-      } finally {
-        if (!cancelled) setPreviewLoading(false);
-      }
-    };
-
-    loadPreview();
-    return () => {
-      cancelled = true;
-    };
-  }, [previewOpen, integrationId]);
+    void loadPreview();
+  }, [previewOpen, loadPreview]);
 
   useEffect(() => {
     if (!previewOpen) return;
@@ -722,16 +769,7 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
       };
       setSavedMappingConfig(nextSavedConfig);
       if (previewOpen) {
-        try {
-          setPreviewLoading(true);
-          setPreviewRequestError(null);
-          setPreviewPayloads(await api.get<PreviewPayloadResponse>(`/integrations/${integrationId}/preview-payloads`));
-        } catch (error) {
-          setPreviewPayloads(null);
-          setPreviewRequestError(error instanceof Error ? error.message : 'Failed to refresh preview payloads');
-        } finally {
-          setPreviewLoading(false);
-        }
+        await loadPreview();
       }
       setUnsavedChanges(false);
       window.alert('Mappings saved successfully.');
@@ -1107,8 +1145,11 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
           loading={previewLoading}
           selectedMappingId={selectedMappingId}
           onClose={() => setPreviewOpen(false)}
+          onRefresh={() => void loadPreview()}
+          refreshing={previewLoading}
           sourceUsed={sourceUsed}
           sourceTotal={sourceTotal}
+          previewedAt={previewPayloads?.previewedAt ?? null}
         />
       )}
 

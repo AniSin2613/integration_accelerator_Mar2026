@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TextField, SelectField, NumberField, KeyValueListEditor } from '@/components/ui/FormFields';
 import { WorkbenchSection } from '@/components/ui/BuilderWorkbench';
 import { type TargetDestination, type TargetGroupConfig, type TargetProfileStatus } from '../types';
@@ -36,6 +36,7 @@ function ProfileStatusIcon({ status }: { status: TargetProfileStatus }) {
 interface TargetGroupWorkbenchProps {
   config: TargetGroupConfig;
   connections: Array<{ id: string; name: string; family: string; status: string; baseUrl?: string }>;
+  sourceFieldOptions?: string[];
   onChange: (config: TargetGroupConfig) => void;
 }
 
@@ -59,8 +60,10 @@ function createPrimaryTarget(): TargetDestination {
   };
 }
 
-export function TargetGroupWorkbench({ config, connections, onChange }: TargetGroupWorkbenchProps) {
+export function TargetGroupWorkbench({ config, connections, sourceFieldOptions = [], onChange }: TargetGroupWorkbenchProps) {
   const availableConnections = connections;
+  const [tokenSearch, setTokenSearch] = useState('');
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
 
   // Detect JSON/XML demo output target from params
   const demoTargetType = (() => {
@@ -108,10 +111,63 @@ export function TargetGroupWorkbench({ config, connections, onChange }: TargetGr
       : `/${selectedTarget.endpointPath}`;
     const qs = (selectedTarget.params ?? [])
       .filter((p) => String(p.key ?? '').trim().length > 0)
-      .map((p) => `${encodeURIComponent(String(p.key))}=${encodeURIComponent(String(p.value ?? ''))}`)
+      .map((p) => `${encodeURIComponent(String(p.key).trim())}=${String(p.value ?? '').trim()}`)
       .join('&');
     return `${base}${path}${qs ? `?${qs}` : ''}`;
   }, [availableConnections, selectedTarget]);
+
+  const availableSourceFields = useMemo(() => {
+    return Array.from(
+      new Set(
+        sourceFieldOptions
+          .map((field) => String(field ?? '').trim())
+          .filter((field) => field.length > 0),
+      ),
+    ).sort((a, b) => a.localeCompare(b));
+  }, [sourceFieldOptions]);
+
+  const filteredSourceFields = useMemo(() => {
+    const query = tokenSearch.trim().toLowerCase();
+    const fields = query.length === 0
+      ? availableSourceFields
+      : availableSourceFields.filter((field) => field.toLowerCase().includes(query));
+    return fields.slice(0, 18);
+  }, [availableSourceFields, tokenSearch]);
+
+  const buildSourceToken = (fieldPath: string) => `{{source.${fieldPath}}}`;
+
+  const appendTokenToPath = (fieldPath: string) => {
+    if (!selectedTarget) return;
+    const token = buildSourceToken(fieldPath);
+    const current = selectedTarget.endpointPath ?? '';
+    updateTarget(selectedTarget.id, {
+      endpointPath: current.includes(token) ? current : `${current}${token}`,
+    });
+  };
+
+  const addTokenParameter = (fieldPath: string) => {
+    if (!selectedTarget) return;
+    const token = buildSourceToken(fieldPath);
+    const nextParams = [...(selectedTarget.params ?? [])];
+    const emptyIndex = nextParams.findIndex((entry) => String(entry.key ?? '').trim().length === 0 && String(entry.value ?? '').trim().length === 0);
+    if (emptyIndex >= 0) {
+      nextParams[emptyIndex] = { ...nextParams[emptyIndex], value: token };
+    } else {
+      nextParams.push({ key: '', value: token });
+    }
+    updateTarget(selectedTarget.id, { params: nextParams });
+  };
+
+  const copyTokenToClipboard = async (fieldPath: string) => {
+    const token = buildSourceToken(fieldPath);
+    try {
+      await navigator.clipboard.writeText(token);
+      setCopiedToken(token);
+      window.setTimeout(() => setCopiedToken(null), 1600);
+    } catch {
+      setCopiedToken(null);
+    }
+  };
 
   return (
     <div className="p-4 space-y-5 pb-6">
@@ -171,14 +227,85 @@ export function TargetGroupWorkbench({ config, connections, onChange }: TargetGr
             <div className="grid grid-cols-2 gap-3">
               <TextField label="Business Object" value={selectedTarget.businessObject} placeholder="SupplierInvoice" onChange={(v) => updateTarget(selectedTarget.id, { businessObject: v })} />
               <SelectField label="Write Mode" value={selectedTarget.writeMode} options={WRITE_MODES} onChange={(v) => updateTarget(selectedTarget.id, { writeMode: v as TargetDestination['writeMode'] })} />
-              <div className="col-span-2">
-                <TextField label="Endpoint / Path" value={selectedTarget.endpointPath} placeholder="/sap/api/invoices" onChange={(v) => updateTarget(selectedTarget.id, { endpointPath: v })} />
+              <div className="col-span-2 space-y-1.5">
+                <TextField label="Endpoint / Path" value={selectedTarget.endpointPath} placeholder="/sap/api/suppliers/{{source.id}}" onChange={(v) => updateTarget(selectedTarget.id, { endpointPath: v })} />
+                <p className="text-[11px] text-text-muted">
+                  Use <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px]">{'{{source.fieldPath}}'}</code> to inject a value from the source payload at runtime, for example <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px]">{'/suppliers/{{source.id}}'}</code>.
+                </p>
               </div>
               <NumberField label="Batch Size" value={selectedTarget.batchSize} min={1} max={10000} onChange={(v) => updateTarget(selectedTarget.id, { batchSize: v })} />
               <SelectField label="Conflict Handling" value={selectedTarget.conflictHandling} options={['Overwrite', 'Skip Existing', 'Fail on Conflict']} onChange={(v) => updateTarget(selectedTarget.id, { conflictHandling: v as TargetDestination['conflictHandling'] })} />
             </div>
 
             <KeyValueListEditor label="Parameters" entries={selectedTarget.params} onChange={(entries) => updateTarget(selectedTarget.id, { params: entries })} />
+            <p className="text-[11px] text-text-muted">
+              Parameter values support the same token syntax, for example <code className="rounded bg-slate-100 px-1 py-0.5 font-mono text-[10px]">{'id={{source.id}}'}</code>.
+            </p>
+
+            <div className="rounded-lg border border-border-soft bg-background-light px-3 py-3 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.06em] text-text-muted">Source Token Picker</p>
+                  <p className="mt-1 text-[11px] text-text-muted">
+                    Insert a source field token into the endpoint path, or add it as a parameter value.
+                  </p>
+                </div>
+                <span className="inline-flex items-center rounded-md bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700 border border-sky-200">
+                  {availableSourceFields.length} fields
+                </span>
+              </div>
+
+              {availableSourceFields.length > 0 ? (
+                <>
+                  <input
+                    type="text"
+                    value={tokenSearch}
+                    onChange={(e) => setTokenSearch(e.target.value)}
+                    placeholder="Find source field…"
+                    className="h-9 w-full rounded-lg border border-border-soft bg-white px-3 text-[13px] text-text-main placeholder:text-text-muted/70 focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/20"
+                  />
+                  <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
+                    {filteredSourceFields.map((fieldPath) => {
+                      const token = buildSourceToken(fieldPath);
+                      const wasCopied = copiedToken === token;
+                      return (
+                        <div key={fieldPath} className="flex items-center gap-2 rounded-lg border border-border-soft bg-white px-2.5 py-2">
+                          <code className="min-w-0 flex-1 truncate text-[11px] text-text-main">{token}</code>
+                          <button
+                            type="button"
+                            onClick={() => appendTokenToPath(fieldPath)}
+                            className="inline-flex h-7 items-center rounded-md border border-border-soft px-2 text-[10px] font-medium text-text-muted hover:border-primary hover:text-primary"
+                          >
+                            Add to path
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => addTokenParameter(fieldPath)}
+                            className="inline-flex h-7 items-center rounded-md border border-border-soft px-2 text-[10px] font-medium text-text-muted hover:border-primary hover:text-primary"
+                          >
+                            Add param
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void copyTokenToClipboard(fieldPath)}
+                            className="inline-flex h-7 items-center rounded-md border border-border-soft px-2 text-[10px] font-medium text-text-muted hover:border-primary hover:text-primary"
+                          >
+                            {wasCopied ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {filteredSourceFields.length === 0 && (
+                    <p className="text-[11px] text-text-muted">No source fields match that search.</p>
+                  )}
+                </>
+              ) : (
+                <p className="text-[11px] text-text-muted">
+                  Source fields will appear here after the source and mapping metadata are available.
+                </p>
+              )}
+            </div>
           </div>
         ) : (
           <div className="rounded-lg border border-dashed border-border-soft bg-slate-50/70 px-3 py-3 text-[12px] text-text-muted">

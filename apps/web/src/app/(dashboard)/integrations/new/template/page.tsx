@@ -1,10 +1,11 @@
 'use client';
 
-import { Suspense, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api-client';
 import { getTemplatesPageData } from '@/components/templates/mockData';
+import type { TemplateItem } from '@/components/templates/types';
 import { DEFAULT_WORKSPACE_SLUG } from '@/lib/workspace';
 
 function getTemplateIncludes(templateName: string, objectType: string): string[] {
@@ -20,14 +21,75 @@ function TemplateCreateContent() {
   const router = useRouter();
   const templateId = searchParams.get('templateId') ?? undefined;
 
-  const templates = getTemplatesPageData('demo').templates;
-  const selectedTemplate = templateId ? templates.find((template) => template.id === templateId) : undefined;
+  // First try mock data for backward compat
+  const mockTemplates = getTemplatesPageData('demo').templates;
+  const mockMatch = templateId ? mockTemplates.find((template) => template.id === templateId) : undefined;
+
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateItem | undefined>(mockMatch);
+  const [loading, setLoading] = useState(!mockMatch && !!templateId);
+
+  // If not found in mock data, fetch from API
+  useEffect(() => {
+    if (mockMatch || !templateId) return;
+    let cancelled = false;
+    api
+      .get<any>(`/templates/${templateId}`)
+      .then((t) => {
+        if (cancelled) return;
+        const latestVersion = t.versions?.[0];
+        const isPrebuilt = t.class === 'CERTIFIED';
+        const srcSystem = (t.sourceSystem ?? 'REST API') as TemplateItem['source'];
+        const tgtSystem = (t.targetSystem ?? 'REST API') as TemplateItem['target'];
+        const bo = (t.businessObject ?? 'API Payload').replace(/_/g, ' ');
+        const useCaseLabel = bo.includes('INVOICE') ? 'Invoices'
+          : bo.includes('PURCHASE_ORDER') || bo.includes('Purchase Order') ? 'Purchase Orders'
+          : bo.includes('VENDOR') || bo.includes('SUPPLIER') ? 'Vendor Sync'
+          : `${srcSystem} to ${tgtSystem}`;
+        setSelectedTemplate({
+          id: t.id,
+          name: t.name,
+          group: isPrebuilt ? 'Prebuilt' : 'Generic',
+          categoryLabel: isPrebuilt ? 'Prebuilt Template' : 'Generic Template',
+          templateTypeTag: isPrebuilt ? 'Prebuilt' : 'Generic',
+          description: t.description ?? '',
+          source: srcSystem,
+          target: tgtSystem,
+          useCase: useCaseLabel as TemplateItem['useCase'],
+          objectType: bo,
+          version: latestVersion?.version ?? 'v1.0',
+          lastUpdated: latestVersion?.publishedAt
+            ? new Date(latestVersion.publishedAt).toLocaleDateString()
+            : 'Recently',
+          updatedDaysAgo: latestVersion?.publishedAt
+            ? Math.max(0, Math.floor((Date.now() - new Date(latestVersion.publishedAt).getTime()) / 86400000))
+            : 0,
+          usageCount: 0,
+          isPublished: true,
+          visibilityScope: 'global' as const,
+          audienceTags: ['general' as const],
+          allowedTenants: [],
+          allowedDemoProfiles: ['generic_enterprise_demo' as const],
+        });
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [templateId, mockMatch]);
 
   const [integrationName, setIntegrationName] = useState(
     selectedTemplate ? `${selectedTemplate.name} Integration` : '',
   );
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Update integration name when template loads from API
+  useEffect(() => {
+    if (selectedTemplate && !integrationName) {
+      setIntegrationName(`${selectedTemplate.name} Integration`);
+    }
+  }, [selectedTemplate]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleCreateDraft = async () => {
     if (!selectedTemplate || !integrationName.trim()) return;
@@ -45,6 +107,21 @@ function TemplateCreateContent() {
       setCreating(false);
     }
   };
+
+  if (loading) {
+    return (
+      <div className="space-y-5">
+        <header>
+          <h1 className="text-[28px] sm:text-[32px] font-bold tracking-[-0.02em] text-text-main leading-tight">
+            Loading Template…
+          </h1>
+          <p className="mt-2 max-w-2xl text-sm text-text-muted">
+            Fetching template details, please wait.
+          </p>
+        </header>
+      </div>
+    );
+  }
 
   if (!selectedTemplate) {
     return (

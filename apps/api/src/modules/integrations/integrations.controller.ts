@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Patch, Param, Body, Delete, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Param, Body, Delete, Query, UseGuards } from '@nestjs/common';
 import { IntegrationsService } from './integrations.service';
 import { AuthGuard } from '../../common/guards/auth.guard';
 
@@ -82,6 +82,14 @@ export class IntegrationsController {
     return this.service.startTestRun(id, body);
   }
 
+  @Get(':id/test-runs')
+  listTestRuns(
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.service.listTestRuns(id, Number(limit) || 20);
+  }
+
   @Get(':id/test-run/:testRunId')
   getTestRunStatus(
     @Param('id') id: string,
@@ -98,6 +106,61 @@ export class IntegrationsController {
   @Post(':id/generate-yaml')
   generateYaml(@Param('id') id: string) {
     return this.service.generateYaml(id);
+  }
+
+  // ─── Node-level diagnostics endpoints ───────────────────────────────────
+
+  @Post(':id/node-test/trigger')
+  testTrigger(@Param('id') id: string) {
+    return this.service.testTrigger(id);
+  }
+
+  @Get(':id/node-test/trigger/last-invocation')
+  viewLastInvocation(@Param('id') id: string) {
+    return this.service.viewLastInvocation(id);
+  }
+
+  @Post(':id/node-test/source/connection')
+  testSourceConnection(@Param('id') id: string) {
+    return this.service.testNodeConnection(id, 'source');
+  }
+
+  @Post(':id/node-test/source/sample')
+  fetchSourceSample(@Param('id') id: string) {
+    return this.service.fetchSourceSample(id);
+  }
+
+  @Post(':id/node-test/mapping/preview')
+  runMappingPreview(@Param('id') id: string) {
+    return this.service.runMappingPreview(id);
+  }
+
+  @Post(':id/node-test/validation/sample')
+  validateSample(
+    @Param('id') id: string,
+    @Body() body: { samplePayload: Record<string, unknown> },
+  ) {
+    return this.service.validateSample(id, body.samplePayload);
+  }
+
+  @Post(':id/node-test/target/connection')
+  testTargetConnection(@Param('id') id: string) {
+    return this.service.testNodeConnection(id, 'target');
+  }
+
+  @Get(':id/node-test/response/preview')
+  previewResponseHandling(@Param('id') id: string) {
+    return this.service.previewResponseHandling(id);
+  }
+
+  @Post(':id/node-test/operations/health-check')
+  runHealthCheck(@Param('id') id: string) {
+    return this.service.runHealthCheck(id);
+  }
+
+  @Get(':id/node-test/operations/alerts')
+  viewLatestAlerts(@Param('id') id: string) {
+    return this.service.viewLatestAlerts(id);
   }
 
   @Delete(':id')

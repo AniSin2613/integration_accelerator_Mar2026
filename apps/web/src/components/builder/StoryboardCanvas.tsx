@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { StoryboardCard, CardRow } from '@/components/ui/StoryboardCard';
 import { StoryboardConnector } from '@/components/ui/StoryboardConnector';
 import type { CardStatus } from '@/components/ui/StoryboardCard';
+import type { WorkbenchTabId } from '@/components/ui/WorkbenchTabs';
 import { WorkflowNodeIcon } from '@/components/ui/WorkflowNodeIcon';
 import { getWorkflowNodeIconByKey, type WorkflowNodeKey } from '@/lib/workflow-node-icons';
 import {
@@ -63,9 +64,10 @@ interface StoryboardCanvasProps {
   onSelectStep: (id: BuilderStepId) => void;
   validationTab?: 'rules' | 'error-handler';
   onValidationTabChange?: (tab: 'rules' | 'error-handler') => void;
+  onWorkbenchTabChange?: (tab: WorkbenchTabId) => void;
 }
 
-export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTab, onValidationTabChange }: StoryboardCanvasProps) {
+export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTab, onValidationTabChange, onWorkbenchTabChange }: StoryboardCanvasProps) {
   const [zoomPct, setZoomPct] = useState(100);
   const stw = getSourceTargetWarning(state);
   const primaryTarget = state.targetGroup.targets[0];
@@ -212,7 +214,7 @@ export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTa
       rows: [
         { label: 'Rules', value: `${state.validation.rules.length}` },
         { label: 'Blocking', value: `${state.validation.rules.filter((r) => r.enabled && r.severity === 'Error').length}` },
-        { label: 'Auto', value: `${state.validation.rules.filter((r) => r.source === 'auto').length}` },
+        { label: 'Enabled', value: `${state.validation.rules.filter((r) => r.enabled).length}` },
         { label: 'Mode', value: state.validation.policyMode },
       ],
     },
@@ -244,10 +246,9 @@ export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTa
       step: 'responseHandling',
       status: responseStatus(state),
       rows: [
-        { label: 'Success', value: state.responseHandling.successPolicy },
-        { label: 'Errors', value: state.responseHandling.errorPolicy },
-        { label: 'Callback', value: state.responseHandling.callbackEnabled ? 'Configured' : 'Off' },
-        { label: 'Business Map', value: state.responseHandling.businessResponseMappingEnabled ? 'Yes' : 'No' },
+        { label: 'Success', value: state.responseHandling.successCriteria === 'only_2xx' ? 'Only 2xx' : 'Any response' },
+        { label: 'To Source', value: state.responseHandling.outputToSource === 'auto_if_expected' ? 'Auto' : 'No' },
+        { label: 'Notification', value: state.responseHandling.notificationEnabled ? 'Configured' : 'Off' },
       ],
     },
     {
@@ -258,10 +259,10 @@ export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTa
       step: 'operations',
       status: operationsStatus(state),
       rows: [
-        { label: 'Retry', value: state.operations.enableRetry ? `${state.operations.maxRetries}x` : 'Off' },
-        { label: 'Alerts', value: state.operations.alertChannel },
-        { label: 'DLQ', value: state.operations.deadLetterEnabled ? 'Enabled' : 'Off' },
-        { label: 'Diag', value: state.operations.diagnosticsLevel },
+        { label: 'Retry', value: state.operations.failureBehavior === 'retry' ? `${state.operations.retryAttempts}x` : 'Off' },
+        { label: 'Alerts', value: state.operations.notificationType },
+        { label: 'History', value: state.operations.storeRunHistory ? `${state.operations.retentionDays}d` : 'Off' },
+        { label: 'Recovery', value: state.operations.failureBehavior === 'retry' ? 'Retry' : state.operations.failureBehavior === 'stop' ? 'Stop' : 'Queue' },
       ],
     },
   ];
@@ -400,7 +401,7 @@ export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTa
                             selected={isValidation ? activeStep === 'validation' && validationTab !== 'error-handler' : card.step === activeStep}
                             status={card.status}
                             statusLabel={card.statusLabel}
-                            onClick={() => { onSelectStep(card.step); if (isValidation) onValidationTabChange?.('rules'); }}
+                            onClick={() => { onSelectStep(card.step); if (isValidation) { onValidationTabChange?.('rules'); onWorkbenchTabChange?.('design'); } }}
                           >
                             {card.rows.map((row) => (
                               <CardRow key={`${card.key}-${row.label}`} label={row.label} value={row.value} mono={row.mono} />
@@ -425,7 +426,7 @@ export function StoryboardCanvas({ state, activeStep, onSelectStep, validationTa
                               <button
                                 type="button"
                                 data-storyboard-card="true"
-                                onClick={() => { onSelectStep('validation'); onValidationTabChange?.('error-handler'); }}
+                                onClick={() => { onSelectStep('validation'); onValidationTabChange?.('error-handler'); onWorkbenchTabChange?.('design'); }}
                                 className={`group relative flex h-[184px] w-[180px] flex-none flex-col rounded-xl border text-left transition-all duration-200 ${
                                   activeStep === 'validation' && validationTab === 'error-handler'
                                     ? 'border-danger/40 bg-surface shadow-[0_0_0_1px_rgba(239,68,68,0.1),0_4px_16px_-2px_rgba(239,68,68,0.12)] ring-1 ring-danger/20'

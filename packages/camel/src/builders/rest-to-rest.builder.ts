@@ -1,12 +1,33 @@
 import * as yaml from 'js-yaml';
 
+export interface ResponseHandlingRouteConfig {
+  successCriteria: 'any_success' | 'only_2xx';
+  failureBehavior: 'retry' | 'stop' | 'error_queue' | 'notify_only';
+  retryAttempts: number;
+  retryInterval: string;
+  partialSuccessPolicy: 'fail_entire_transaction' | 'allow_partial_success';
+  outputToSource: 'auto_if_expected' | 'no_response';
+  notificationEnabled: boolean;
+  notificationOnSuccess: boolean;
+  notificationOnFailure: boolean;
+  notificationDestinationUrl: string;
+  notificationMethod: string;
+  notificationPayloadMode: 'standard_response' | 'custom_payload';
+  loggingLevel: 'Minimal' | 'Standard' | 'Verbose';
+  debugMode: boolean;
+}
+
 export interface RestToRestRouteParams {
   routeId: string;
   description: string;
   sourceBaseUrl: string;
   sourcePath: string;
+  sourceMethod?: string;
+  sourceQueryParams?: Array<{ key: string; value: string }>;
   targetBaseUrl: string;
   targetPath: string;
+  targetMethod?: string;
+  targetQueryParams?: Array<{ key: string; value: string }>;
   httpMethod: string;
   fieldMappings: Array<{
     sourceField: string;
@@ -14,6 +35,7 @@ export interface RestToRestRouteParams {
     transformType?: string;
     transformConfig?: Record<string, unknown>;
   }>;
+  responseHandling?: ResponseHandlingRouteConfig;
 }
 
 export interface MappingPreviewRouteParams {
@@ -69,9 +91,17 @@ function validateRouteUrl(url: string, label: string): void {
  * the camel-runner service for execution.
  */
 export function buildRestToRestRoute(params: RestToRestRouteParams): string {
+  const sourceUri = `${params.sourceBaseUrl}${appendQueryParams(params.sourcePath, params.sourceQueryParams)}`;
+  const targetUri = `${params.targetBaseUrl}${renderDynamicSourceTemplate(appendQueryParams(params.targetPath, params.targetQueryParams))}`;
+  const sourceMethod = normalizeHttpMethod(params.sourceMethod, 'GET');
+  const targetMethod = normalizeHttpMethod(params.targetMethod, 'POST');
+
   // SSRF protection: validate source and target URLs
-  validateRouteUrl(`${params.sourceBaseUrl}${params.sourcePath}`, 'Source');
-  validateRouteUrl(`${params.targetBaseUrl}${params.targetPath}`, 'Target');
+  validateRouteUrl(sourceUri, 'Source');
+  validateRouteUrl(targetUri, 'Target');
+
+  const rh = params.responseHandling;
+  const logLevel = rh?.loggingLevel === 'Minimal' ? 'WARN' : rh?.loggingLevel === 'Verbose' ? 'DEBUG' : 'INFO';
 
   const mappingSteps = params.fieldMappings.map((m) => {
     const base = {
@@ -95,42 +125,226 @@ export function buildRestToRestRoute(params: RestToRestRouteParams): string {
     return [base];
   });
 
-  const route = [
-    {
-      from: {
-        uri: 'platform-http:/api/invoke',
-        parameters: { httpMethodRestrict: params.httpMethod },
-        id: params.routeId,
-        description: params.description,
-        steps: [
-          { log: { message: 'Integration triggered: ${headers.CamelHttpMethod} ${headers.CamelHttpPath}', loggingLevel: 'INFO' } },
+  // Build post-target steps based on response handling config
+  const postTargetSteps: Record<string, unknown>[] = [];
 
-          // Fetch from source
+  // Success criteria evaluation
+  if (rh && rh.successCriteria === 'only_2xx') {
+    postTargetSteps.push({
+      choice: {
+        when: [
           {
-            toD: {
-              uri: `${params.sourceBaseUrl}${params.sourcePath}`,
-              parameters: { httpMethod: 'GET' },
-            },
+            simple: '${header.CamelHttpResponseCode} >= 200 && ${header.CamelHttpResponseCode} < 300',
+            steps: [
+              { log: { message: 'Target responded with success (2xx): ${header.CamelHttpResponseCode}', loggingLevel: logLevel } },
+              { setProperty: { name: 'integrationSuccess', constant: 'true' } },
+            ],
           },
-          { log: { message: 'Source response received', loggingLevel: 'INFO' } },
-
-          // Apply field mapping steps (flattened)
-          ...mappingSteps.flat(),
-
-          // Post to target
-          {
-            toD: {
-              uri: `${params.targetBaseUrl}${params.targetPath}`,
-              parameters: { httpMethod: 'POST' },
-            },
-          },
-          { log: { message: 'Delivered to target', loggingLevel: 'INFO' } },
         ],
+        otherwise: {
+          steps: [
+            { log: { message: 'Target responded with non-2xx: ${header.CamelHttpResponseCode}', loggingLevel: 'WARN' } },
+            { setProperty: { name: 'integrationSuccess', constant: 'false' } },
+          ],
+        },
       },
-    },
-  ];
+    });
+  } else {
+    // 'any_success' — any response from target counts as success
+    postTargetSteps.push(
+      { setProperty: { name: 'integrationSuccess', constant: 'true' } },
+    );
+  }
 
-  return yaml.dump(route, { lineWidth: 120, noRefs: true });
+  if (rh?.debugMode) {
+    postTargetSteps.push({
+      log: { message: 'DEBUG — Response body: ${body}', loggingLevel: 'DEBUG' },
+    });
+    postTargetSteps.push({
+      log: { message: 'DEBUG — Response headers: ${headers}', loggingLevel: 'DEBUG' },
+    });
+  }
+
+  postTargetSteps.push(
+    { log: { message: 'Delivered to target', loggingLevel: logLevel } },
+  );
+
+  // Build notification steps (onCompletion)
+  const onCompletionSteps: Record<string, unknown>[] = [];
+  if (rh?.notificationEnabled && rh.notificationDestinationUrl) {
+    // Validate notification URL against SSRF
+    validateRouteUrl(rh.notificationDestinationUrl, 'Notification');
+
+    const notifSteps: Record<string, unknown>[] = [];
+
+    // Set notification headers
+    notifSteps.push(
+      { setHeader: { name: 'Content-Type', constant: 'application/json' } },
+      { setHeader: { name: 'X-Integration-Route', simple: '${routeId}' } },
+    );
+
+    // Build condition for when to fire notification
+    if (rh.notificationOnSuccess && rh.notificationOnFailure) {
+      // Always fire
+      notifSteps.push({
+        log: { message: 'Sending notification to ${constant:notificationUrl}', loggingLevel: logLevel },
+      });
+    } else if (rh.notificationOnSuccess && !rh.notificationOnFailure) {
+      notifSteps.push({
+        filter: {
+          simple: '${exchangeProperty.CamelExchangeFailed} == false',
+          steps: [{ log: { message: 'Sending success notification', loggingLevel: logLevel } }],
+        },
+      });
+    } else if (!rh.notificationOnSuccess && rh.notificationOnFailure) {
+      notifSteps.push({
+        filter: {
+          simple: '${exchangeProperty.CamelExchangeFailed} == true',
+          steps: [{ log: { message: 'Sending failure notification', loggingLevel: logLevel } }],
+        },
+      });
+    }
+
+    notifSteps.push({
+      toD: {
+        uri: rh.notificationDestinationUrl,
+        parameters: { httpMethod: rh.notificationMethod || 'POST' },
+      },
+    });
+
+    onCompletionSteps.push({
+      onCompletion: {
+        steps: notifSteps,
+      },
+    });
+  }
+
+  // Build error handler config
+  let errorHandlerConfig: Record<string, unknown> | undefined;
+  if (rh) {
+    const retryIntervalMs = parseRetryInterval(rh.retryInterval);
+
+    switch (rh.failureBehavior) {
+      case 'retry':
+        errorHandlerConfig = {
+          defaultErrorHandler: {
+            redeliveryPolicy: {
+              maximumRedeliveries: rh.retryAttempts,
+              redeliveryDelay: retryIntervalMs,
+              retryAttemptedLogLevel: 'WARN',
+              logRetryAttempted: true,
+            },
+          },
+        };
+        break;
+      case 'error_queue':
+        errorHandlerConfig = {
+          deadLetterChannel: {
+            deadLetterUri: 'direct:error-queue',
+            redeliveryPolicy: {
+              maximumRedeliveries: rh.retryAttempts,
+              redeliveryDelay: retryIntervalMs,
+            },
+            useOriginalMessage: true,
+          },
+        };
+        break;
+      case 'stop':
+        // Default Camel behavior — propagates exception, stops route
+        break;
+      case 'notify_only':
+        errorHandlerConfig = {
+          defaultErrorHandler: {
+            redeliveryPolicy: { maximumRedeliveries: 0 },
+          },
+        };
+        break;
+    }
+  }
+
+  const route: Record<string, unknown> = {
+    from: {
+      uri: 'platform-http:/api/invoke',
+      parameters: { httpMethodRestrict: params.httpMethod },
+      id: params.routeId,
+      description: params.description,
+      steps: [
+        ...onCompletionSteps,
+        { log: { message: 'Integration triggered: ${headers.CamelHttpMethod} ${headers.CamelHttpPath}', loggingLevel: logLevel } },
+
+        // Fetch from source
+        {
+          toD: {
+            uri: sourceUri,
+            parameters: { httpMethod: sourceMethod },
+          },
+        },
+        { log: { message: 'Source response received', loggingLevel: logLevel } },
+
+        // Apply field mapping steps (flattened)
+        ...mappingSteps.flat(),
+
+        // Post to target
+        {
+          toD: {
+            uri: targetUri,
+            parameters: { httpMethod: targetMethod },
+          },
+        },
+
+        // Post-target evaluation
+        ...postTargetSteps,
+      ],
+    },
+  };
+
+  // Attach error handler at route level
+  if (errorHandlerConfig) {
+    route.errorHandler = errorHandlerConfig;
+  }
+
+  return yaml.dump([route], { lineWidth: 120, noRefs: true });
+}
+
+/** Parse UI retry interval string to milliseconds */
+function parseRetryInterval(interval: string): number {
+  const map: Record<string, number> = {
+    '1 min': 60_000,
+    '5 min': 300_000,
+    '15 min': 900_000,
+    '30 min': 1_800_000,
+    '1 hour': 3_600_000,
+  };
+  return map[interval] ?? 300_000;
+}
+
+function normalizeHttpMethod(value: string | undefined, fallback: string): string {
+  const method = String(value ?? '').trim().toUpperCase();
+  return method || fallback;
+}
+
+function appendQueryParams(pathValue: string, entries: Array<{ key: string; value: string }> = []): string {
+  const trimmed = String(pathValue ?? '').trim();
+  const normalizedPath = trimmed.length === 0 || trimmed.startsWith('/') || trimmed.startsWith('?') || /^\{\{[^{}]+\}\}$/.test(trimmed)
+    ? trimmed
+    : `/${trimmed}`;
+
+  const query = entries
+    .filter((entry) => typeof entry?.key === 'string' && entry.key.trim().length > 0)
+    .map((entry) => `${encodeURIComponent(String(entry.key).trim())}=${String(entry.value ?? '').trim()}`)
+    .join('&');
+
+  if (!query) return normalizedPath;
+  if (!normalizedPath) return `?${query}`;
+  return `${normalizedPath}${normalizedPath.includes('?') ? '&' : '?'}${query}`;
+}
+
+function renderDynamicSourceTemplate(template: string): string {
+  return String(template ?? '').replace(/\{\{\s*(?:source|body)\.([^}]+?)\s*\}\}/g, (_match, rawPath: string) => {
+    const fieldPath = String(rawPath ?? '').trim();
+    if (!fieldPath) return '';
+    return `\${jsonpath:${toJsonPath(fieldPath)}}`;
+  });
 }
 
 function toJsonPath(path: string, sourcePayload?: Record<string, unknown>): string {

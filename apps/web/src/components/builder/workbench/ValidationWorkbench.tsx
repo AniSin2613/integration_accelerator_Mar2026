@@ -47,7 +47,7 @@ function operatorLabel(op: ValidationOperator): string {
 }
 
 /* ---- Test evaluator for structured rules ---- */
-function evaluateRule(rule: ValidationRule, record: Record<string, unknown>): { passed: boolean; message: string } {
+export function evaluateRule(rule: ValidationRule, record: Record<string, unknown>): { passed: boolean; message: string } {
   const fieldValue = rule.field.split('.').reduce((o: any, k) => o?.[k], record);
 
   switch (rule.operator) {
@@ -132,8 +132,6 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
   };
 
   const removeRule = (id: string) => {
-    const rule = config.rules.find((r) => r.id === id);
-    if (rule?.source === 'auto') return;
     onChange({ ...config, rules: config.rules.filter((r) => r.id !== id) });
     if (selectedRuleId === id) onSelectRule(null);
   };
@@ -247,7 +245,6 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
             {filteredRules.map((rule) => {
               const isExpanded = rule.id === selectedRuleId;
               const sev = SEVERITY_STYLE[rule.severity];
-              const isAuto = rule.source === 'auto';
               return (
                 <div key={rule.id} className={`rounded-lg border transition-all ${
                   isExpanded ? 'border-primary/40 bg-primary/[0.02] ring-1 ring-primary/10' : 'border-border-soft bg-surface hover:border-primary/20'
@@ -268,11 +265,6 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
                         <p className={`text-[11px] font-semibold truncate ${rule.enabled ? 'text-text-main' : 'text-text-muted'}`}>
                           {rule.name || 'Unnamed rule'}
                         </p>
-                        {isAuto && (
-                          <span className="inline-flex items-center gap-0.5 rounded-full bg-ai-bg px-1.5 py-px text-[8px] font-bold uppercase tracking-wider text-ai">
-                            <span className="material-symbols-outlined text-[9px]">auto_fix_high</span>auto
-                          </span>
-                        )}
                       </div>
                       <p className="text-[10px] font-mono text-text-muted truncate mt-0.5">
                         {rule.field} {operatorLabel(rule.operator)}{operatorNeedsValue(rule.operator) ? ` ${Array.isArray(rule.value) ? rule.value.join(', ') : rule.value}` : ''}
@@ -286,14 +278,14 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
 
                     {/* Action icons — always occupy space */}
                     <button type="button" onClick={(e) => { e.stopPropagation(); duplicateRule(rule); }}
-                      className={`shrink-0 inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-slate-100 hover:text-primary transition-colors ${isAuto ? 'invisible' : ''}`}
+                      className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-slate-100 hover:text-primary transition-colors"
                       aria-label="Duplicate rule"
                     >
                       <span className="material-symbols-outlined text-[13px]">content_copy</span>
                     </button>
 
                     <button type="button" onClick={(e) => { e.stopPropagation(); removeRule(rule.id); }}
-                      className={`shrink-0 inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-slate-100 hover:text-danger transition-colors ${isAuto ? 'invisible' : ''}`}
+                      className="shrink-0 inline-flex h-6 w-6 items-center justify-center rounded text-text-muted hover:bg-slate-100 hover:text-danger transition-colors"
                       aria-label="Remove rule"
                     >
                       <span className="material-symbols-outlined text-[13px]">close</span>
@@ -314,8 +306,7 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
                         <select
                           value={rule.field}
                           onChange={(e) => updateRule(rule.id, { field: e.target.value })}
-                          disabled={isAuto}
-                          className="w-full rounded border border-border-soft bg-surface px-2 py-1.5 text-[11px] font-mono text-text-main focus:border-primary/50 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-full rounded border border-border-soft bg-surface px-2 py-1.5 text-[11px] font-mono text-text-main focus:border-primary/50 focus:outline-none"
                         >
                           <option value="">Select field...</option>
                           {targetFields.map((f) => (
@@ -333,8 +324,7 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
                         <select
                           value={rule.operator}
                           onChange={(e) => updateRule(rule.id, { operator: e.target.value as ValidationOperator })}
-                          disabled={isAuto}
-                          className="w-full rounded border border-border-soft bg-surface px-2 py-1.5 text-[11px] text-text-main focus:border-primary/50 focus:outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+                          className="w-full rounded border border-border-soft bg-surface px-2 py-1.5 text-[11px] text-text-main focus:border-primary/50 focus:outline-none"
                         >
                           {VALIDATION_OPERATORS.map((op) => (
                             <option key={op.value} value={op.value}>{op.label}</option>
@@ -373,35 +363,6 @@ export function ValidationWorkbench({ config, onChange, selectedRuleId, onSelect
             })}
           </div>
 
-          {/* Test panel */}
-          {config.rules.length > 0 && (
-            <div className="flex-none border-t border-border-soft px-4 py-2.5">
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-[10px] font-bold uppercase tracking-[0.08em] text-text-muted/80">Test Rules Against Sample</p>
-                <button type="button" onClick={runTest} className="inline-flex items-center gap-1 rounded text-[10px] font-semibold text-primary hover:text-primary/80">
-                  <span className="material-symbols-outlined text-[12px]">play_arrow</span>Run Test
-                </button>
-              </div>
-              <textarea
-                value={testPayload}
-                onChange={(e) => setTestPayload(e.target.value)}
-                placeholder='{"invoice-number": "INV-001", "gross-total": 150}'
-                rows={2}
-                className="w-full rounded border border-border-soft bg-surface px-2 py-1.5 text-[11px] font-mono text-text-main placeholder:text-text-muted/40 focus:border-primary/50 focus:outline-none"
-              />
-              {testResults && (
-                <div className="mt-1.5 space-y-0.5">
-                  {testResults.map((r, i) => (
-                    <div key={i} className={`flex items-center gap-1.5 text-[10px] ${r.passed ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      <span className="material-symbols-outlined text-[11px]">{r.passed ? 'check_circle' : 'cancel'}</span>
-                      <span className="font-medium">{r.ruleName}:</span>
-                      <span>{r.message}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
         </>
       )}
 

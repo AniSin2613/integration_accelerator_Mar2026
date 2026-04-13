@@ -19,7 +19,7 @@ import { createDemoBuilderState, createBlankBuilderState, DEFAULT_STEPS } from '
 import { BuilderTopBar } from './BuilderTopBar';
 import { StoryboardCanvas } from './StoryboardCanvas';
 import { WorkbenchTabs, type WorkbenchTabId } from '@/components/ui/WorkbenchTabs';
-import { StepOutputPanel } from '@/components/ui/StepOutputPanel';
+import { NodeDiagnosticsPanel } from './NodeDiagnosticsPanel';
 import { TriggerWorkbench } from './workbench/TriggerWorkbench';
 import { SourceGroupWorkbench } from './workbench/SourceGroupWorkbench';
 import { MappingStudioSummaryCard } from '@/components/mapping-studio/MappingStudioSummaryCard';
@@ -139,7 +139,7 @@ function recomputeSteps(state: BuilderState): StepMeta[] {
       case 'responseHandling':
         status = isResponseHandlingComplete(state.responseHandling)
           ? 'complete'
-          : state.responseHandling.businessResponseMappingEnabled || state.responseHandling.callbackEnabled
+          : (state.responseHandling.successCriteria !== 'any_success' || state.responseHandling.notificationEnabled || state.responseHandling.outputToSource === 'auto_if_expected')
             ? 'in-progress'
             : 'not-started';
         break;
@@ -151,22 +151,6 @@ function recomputeSteps(state: BuilderState): StepMeta[] {
   });
 }
 
-function StepValidationPanel({ step, state }: { step: BuilderStepId; state: BuilderState }) {
-  const stWarning = getSourceTargetWarning(state);
-  return (
-    <div className="p-4 space-y-2">
-      <p className="text-[12px] font-semibold text-text-main">Validation checks for {STEP_LABELS[step]}</p>
-      <ul className="text-[12px] text-text-muted space-y-1">
-        {step === 'mapping' && <li>Unmapped required canonical fields: {state.mapping.unmappedTargetFields.length}</li>}
-        {step === 'sourceGroup' && <li>Primary source configured: {state.sourceGroup.primary.connectionId ? 'Yes' : 'No'}</li>}
-        {step === 'targetGroup' && <li>Target/source collision check: {stWarning === 'block' ? 'Blocked' : stWarning === 'warn' ? 'Warning' : 'Pass'}</li>}
-        {step === 'responseHandling' && <li>Error mapping policy configured: {state.responseHandling.errorPolicy ? 'Yes' : 'No'}</li>}
-        <li>Security: payload previews are redacted by classification and environment policy.</li>
-      </ul>
-    </div>
-  );
-}
-
 function StageStatusBadge({ value }: { value?: string }) {
   const v = value ?? 'N/A';
   const color = v === 'SUCCESS' ? 'text-emerald-700' : v === 'PARTIAL' ? 'text-amber-700' : v === 'FAILED' ? 'text-rose-700' : v === 'SKIPPED' ? 'text-slate-400' : 'text-text-main';
@@ -175,6 +159,7 @@ function StageStatusBadge({ value }: { value?: string }) {
 
 interface E2ETestResult {
   testRunId?: string;
+  createdAt?: string;
   status: string;
   summary: string;
   errors: string[];
@@ -201,13 +186,33 @@ interface E2ETestResult {
     targetType?: 'JSON' | 'XML';
     targetName?: string;
   };
+  targetType?: 'JSON' | 'XML';
+  targetName?: string;
+  hasReceipt?: boolean;
   driftSuggestionsCreated?: number;
 }
 
-function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; state: BuilderState; integrationId: string }) {
-  const [testResult, setTestResult] = useState<E2ETestResult | null>(null);
-  const [running, setRunning] = useState(false);
+function StepTestPanel({
+  step,
+  state,
+  integrationId,
+  testResult,
+  onTestResultChange,
+  running,
+  onRunningChange,
+}: {
+  step: BuilderStepId;
+  state: BuilderState;
+  integrationId: string;
+  testResult: E2ETestResult | null;
+  onTestResultChange: (result: E2ETestResult | null) => void;
+  running: boolean;
+  onRunningChange: (running: boolean) => void;
+}) {
   const [targetMode, setTargetMode] = useState<'success' | 'error'>('success');
+  const [history, setHistory] = useState<E2ETestResult[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [loadingRunId, setLoadingRunId] = useState<string | null>(null);
 
   const profile = state.targetGroup.targetProfileState;
   const primaryTarget = state.targetGroup.targets[0];
@@ -239,9 +244,44 @@ function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; st
     URL.revokeObjectURL(url);
   };
 
+  const refreshHistory = useCallback(async () => {
+    setHistoryLoading(true);
+    try {
+      const { api } = await import('@/lib/api-client');
+      const out = await api.get<E2ETestResult[]>(`/integrations/${integrationId}/test-runs?limit=15`);
+      setHistory(Array.isArray(out) ? out : []);
+    } catch {
+      setHistory([]);
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [integrationId]);
+
+  useEffect(() => {
+    void refreshHistory();
+  }, [refreshHistory]);
+
+  const loadHistoricalRun = async (testRunId: string) => {
+    setLoadingRunId(testRunId);
+    try {
+      const { api } = await import('@/lib/api-client');
+      const result = await api.get<E2ETestResult>(`/integrations/${integrationId}/test-run/${testRunId}`);
+      onTestResultChange(result);
+    } catch (err) {
+      onTestResultChange({
+        status: 'error',
+        summary: err instanceof Error ? err.message : 'Failed to load historical test run',
+        errors: [String(err)],
+        context: {},
+      });
+    } finally {
+      setLoadingRunId(null);
+    }
+  };
+
   const runE2ETest = async () => {
-    setRunning(true);
-    setTestResult(null);
+    onRunningChange(true);
+    onTestResultChange(null);
     try {
       const { api } = await import('@/lib/api-client');
       const startResult = await api.post<{ testRunId: string; status: string }>(
@@ -259,7 +299,7 @@ function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; st
       if (!testRunId) throw new Error('No testRunId returned');
 
       // Show initial running state with stage info
-      setTestResult({ testRunId, status: 'running', summary: 'Test run in progress…', errors: [], context: {} });
+      onTestResultChange({ testRunId, status: 'running', summary: 'Test run in progress…', errors: [], context: {} });
 
       // Poll for completion
       const poll = async (): Promise<E2ETestResult> => {
@@ -267,7 +307,7 @@ function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; st
           `/integrations/${integrationId}/test-run/${testRunId}`,
         );
         if (result.status === 'running') {
-          setTestResult(result);
+          onTestResultChange(result);
           await new Promise((r) => setTimeout(r, 3000));
           return poll();
         }
@@ -275,11 +315,13 @@ function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; st
       };
 
       const finalResult = await poll();
-      setTestResult(finalResult);
+      onTestResultChange(finalResult);
+      void refreshHistory();
     } catch (err) {
-      setTestResult({ status: 'error', summary: err instanceof Error ? err.message : 'Test failed', errors: [String(err)], context: {} });
+      onTestResultChange({ status: 'error', summary: err instanceof Error ? err.message : 'Test failed', errors: [String(err)], context: {} });
+      void refreshHistory();
     } finally {
-      setRunning(false);
+      onRunningChange(false);
     }
   };
 
@@ -321,7 +363,7 @@ function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; st
           className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary hover:underline"
         >
           <span className="material-symbols-outlined text-[13px]">receipt_long</span>
-          Open receipts
+          Open history & receipts
         </Link>
       </div>
 
@@ -494,6 +536,70 @@ function StepTestPanel({ step, state, integrationId }: { step: BuilderStepId; st
           <pre className="max-h-36 overflow-auto rounded bg-white p-2 text-[10px] text-text-main">{testResult.targetResponse.body || 'N/A'}</pre>
         </div>
       )}
+
+      <div className="rounded-lg border border-border-soft bg-white/80 px-3 py-2.5">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-semibold text-text-main">Recent Test Runs</p>
+            <p className="text-[10px] text-text-muted">Success and error runs stay here even if no receipt was generated.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refreshHistory()}
+            className="inline-flex items-center gap-1 rounded-md border border-border-soft bg-white px-2 py-1 text-[10px] font-semibold text-text-main hover:bg-slate-50"
+          >
+            <span className="material-symbols-outlined text-[12px]">refresh</span>
+            Refresh
+          </button>
+        </div>
+
+        {historyLoading ? (
+          <p className="text-[11px] text-text-muted">Loading recent test runs…</p>
+        ) : history.length === 0 ? (
+          <p className="text-[11px] text-text-muted">No historical test runs yet. Run the E2E flow once to capture success or error results.</p>
+        ) : (
+          <div className="space-y-2">
+            {history.map((run) => {
+              const isCurrent = run.testRunId && testResult?.testRunId === run.testRunId;
+              return (
+                <div key={run.testRunId ?? `${run.createdAt}-${run.summary}`} className={`rounded-md border px-2.5 py-2 ${isCurrent ? 'border-primary/40 bg-primary/[0.04]' : 'border-border-soft bg-slate-50/60'}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                        <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold ${run.status === 'success' ? 'bg-emerald-50 text-emerald-700' : run.status === 'running' ? 'bg-sky-50 text-sky-700' : 'bg-rose-50 text-rose-700'}`}>
+                          {run.status.toUpperCase()}
+                        </span>
+                        <span className="text-[10px] font-mono text-text-muted">{run.testRunId ?? 'N/A'}</span>
+                        {run.createdAt && (
+                          <span className="text-[10px] text-text-muted">{new Date(run.createdAt).toLocaleString()}</span>
+                        )}
+                        <span className={`inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold ${run.hasReceipt ? 'bg-sky-50 text-sky-700' : 'bg-slate-100 text-slate-600'}`}>
+                          {run.hasReceipt ? 'Receipt captured' : 'No receipt'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-text-main">{run.summary}</p>
+                      {run.recordCounts && (
+                        <p className="mt-1 text-[10px] text-text-muted">
+                          Total {run.recordCounts.total} • Passed {run.recordCounts.passed} • Failed {run.recordCounts.failed}
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!run.testRunId || loadingRunId === run.testRunId}
+                      onClick={() => run.testRunId && void loadHistoricalRun(run.testRunId)}
+                      className="inline-flex items-center gap-1 rounded-md border border-border-soft bg-white px-2 py-1 text-[10px] font-semibold text-text-main hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      <span className="material-symbols-outlined text-[12px]">history</span>
+                      {loadingRunId === run.testRunId ? 'Loading…' : 'Open'}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Drift Warning (simplified for builder users) */}
       {testResult && testResult.driftSuggestionsCreated != null && testResult.driftSuggestionsCreated > 0 && (
@@ -739,6 +845,8 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
   const [state, setState] = useState<BuilderState>(() => createBlankBuilderState(integrationId, 'Loading…'));
   const [availableConnections, setAvailableConnections] = useState<BuilderConnectionOption[]>([]);
   const [activeTab, setActiveTab] = useState<WorkbenchTabId>('design');
+  const [latestTestResult, setLatestTestResult] = useState<E2ETestResult | null>(null);
+  const [testRunning, setTestRunning] = useState(false);
   const [diagnosticsState, setDiagnosticsState] = useState<'summary' | 'expanded'>('summary');
   const [leftPanelExpanded, setLeftPanelExpanded] = useState(false);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(true);
@@ -822,7 +930,8 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
         const trigger = data.triggerState ?? createBlankBuilderState('', '').trigger;
         const rawValidation = data.validationState ?? createBlankBuilderState('', '').validation;
         const validation = normalizeValidationConfig(rawValidation);
-        const responseHandling = data.responseHandlingState ?? createBlankBuilderState('', '').responseHandling;
+        const responseHandlingDefaults = createBlankBuilderState('', '').responseHandling;
+        const responseHandling = { ...responseHandlingDefaults, ...(data.responseHandlingState ?? {}) };
         const operations = data.operationsState ?? createBlankBuilderState('', '').operations;
 
         // Load mapping state from mapping sets
@@ -980,7 +1089,6 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
       next.steps = recomputeSteps(next);
       return next;
     });
-    setActiveTab('design');
   }, []);
 
   const addAdditionalSource = useCallback(() => {
@@ -1120,6 +1228,56 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
   const noop = useCallback(() => {}, []);
   const stWarning = getSourceTargetWarning(state);
   const activeStep = state.activeStep;
+
+  // ── E2E Test from header ──
+  const runE2ETest = useCallback(async () => {
+    if (testRunning) return;
+    setTestRunning(true);
+    setLatestTestResult(null);
+    setActiveTab('diagnostics');
+    // Select target node so user sees delivery results
+    setState((prev) => {
+      const next = { ...prev, activeStep: 'targetGroup' as BuilderStepId };
+      next.steps = recomputeSteps(next);
+      return next;
+    });
+    try {
+      const { api } = await import('@/lib/api-client');
+      const primaryTarget = state.targetGroup.targets[0];
+      const computedTargetType: 'JSON' | 'XML' =
+        (primaryTarget?.operation ?? '').toUpperCase().includes('XML') ||
+        (primaryTarget?.endpointPath ?? '').toLowerCase().includes('.xml')
+          ? 'XML'
+          : 'JSON';
+      const computedTargetName = primaryTarget?.name || primaryTarget?.connectionName || 'demo-target';
+
+      const startResult = await api.post<{ testRunId: string; status: string }>(
+        `/integrations/${integrationId}/test-run`,
+        { dryRun: false, step: 'targetGroup', targetType: computedTargetType, targetName: computedTargetName, targetMode: 'success' },
+      );
+
+      const testRunId = startResult.testRunId;
+      if (!testRunId) throw new Error('No testRunId returned');
+
+      setLatestTestResult({ testRunId, status: 'running', summary: 'Test run in progress…', errors: [], context: {} });
+
+      const poll = async (): Promise<E2ETestResult> => {
+        const result = await api.get<E2ETestResult>(`/integrations/${integrationId}/test-run/${testRunId}`);
+        if (result.status === 'running') {
+          setLatestTestResult(result);
+          await new Promise((r) => setTimeout(r, 3000));
+          return poll();
+        }
+        return result;
+      };
+      const finalResult = await poll();
+      setLatestTestResult(finalResult);
+    } catch (err) {
+      setLatestTestResult({ status: 'error', summary: err instanceof Error ? err.message : 'Test failed', errors: [String(err)], context: {} });
+    } finally {
+      setTestRunning(false);
+    }
+  }, [integrationId, state.targetGroup.targets, testRunning]);
   const meta = STEP_WB_META[activeStep];
   const completedCount = state.steps.filter((step) => step.status === 'complete').length;
   const blockedByProfile =
@@ -1183,7 +1341,7 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
         lastSavedAt={state.lastSavedAt}
         onSaveDraft={handleSave}
         onValidate={noop}
-        onTest={noop}
+        onTest={runE2ETest}
       />
 
       <div className="flex flex-none items-center justify-between gap-3 border-b border-white/45 bg-white/50 px-4 py-2 backdrop-blur-md">
@@ -1246,7 +1404,7 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
             )}
 
             <div className="h-[calc(100%-0.5rem)]">
-              <StoryboardCanvas state={state} activeStep={activeStep} onSelectStep={selectStep} validationTab={validationTab} onValidationTabChange={setValidationTab} />
+              <StoryboardCanvas state={state} activeStep={activeStep} onSelectStep={selectStep} validationTab={validationTab} onValidationTabChange={setValidationTab} onWorkbenchTabChange={setActiveTab} />
             </div>
           </div>
 
@@ -1303,8 +1461,8 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
                   <span className="font-semibold text-text-main">{transformsCount}</span>
                 </li>
                 <li className="flex items-center justify-between rounded-md bg-slate-100/65 px-2 py-1.5">
-                  <span>Diagnostics Level</span>
-                  <span className="font-semibold text-text-main">{state.operations.diagnosticsLevel}</span>
+                  <span>Monitoring</span>
+                  <span className="font-semibold text-text-main">{state.operations.failureBehavior === 'retry' ? `Retry ${state.operations.retryAttempts}x` : state.operations.failureBehavior === 'stop' ? 'Stop' : 'Failed queue'}</span>
                 </li>
                 <li className="flex items-center justify-between rounded-md bg-slate-100/65 px-2 py-1.5">
                   <span>Optional Nodes</span>
@@ -1436,6 +1594,10 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
                   <TargetGroupWorkbench
                     config={state.targetGroup}
                     connections={availableConnections}
+                    sourceFieldOptions={[
+                      ...state.mapping.mappings.map((mapping) => mapping.sourceField),
+                      ...state.mapping.unmappedSourceFields,
+                    ]}
                     onChange={(targetGroup) => update({ targetGroup })}
                   />
                 )}
@@ -1446,11 +1608,14 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
                   <MonitoringWorkbench config={state.operations} onChange={(operations) => update({ operations })} />
                 )}
 
-                {activeTab === 'output' && (
-                  <StepOutputPanel title={`${STEP_LABELS[activeStep]} Output`} status="Preview" timing="142ms" errorCount={0} displayMode="expanded" />
+                {activeTab === 'diagnostics' && (
+                  <NodeDiagnosticsPanel
+                    step={activeStep}
+                    state={state}
+                    integrationId={integrationId}
+                    testResult={latestTestResult}
+                  />
                 )}
-                {activeTab === 'validation' && <StepValidationPanel step={activeStep} state={state} />}
-                {activeTab === 'test' && <StepTestPanel step={activeStep} state={state} integrationId={integrationId} />}
               </div>
             </>
           ) : (

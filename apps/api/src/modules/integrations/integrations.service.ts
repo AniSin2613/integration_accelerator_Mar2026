@@ -1,6 +1,7 @@
-import { BadGatewayException, BadRequestException, GatewayTimeoutException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadGatewayException, BadRequestException, GatewayTimeoutException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CamelService } from '../camel/camel.service';
+import { ConnectionsService } from '../connections/connections.service';
 import { DriftDetectionService } from '../target-profiles/drift-detection.service';
 import { ProfilesService } from '../profiles/profiles.service';
 import * as crypto from 'crypto';
@@ -12,9 +13,12 @@ const ROUTES_DIR = process.env.CAMEL_ROUTES_DIR ?? '/app/camel-routes';
 
 @Injectable()
 export class IntegrationsService {
+  private readonly logger = new Logger(IntegrationsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly camel: CamelService,
+    private readonly connections: ConnectionsService,
     private readonly driftDetection: DriftDetectionService,
     private readonly profiles: ProfilesService,
   ) {}
@@ -103,29 +107,32 @@ export class IntegrationsService {
       targetProfileState: null,
     } : null);
 
-    // Build baseline validation from template defaults
-    const validationState = defaultMappings.validationBaseline ?? { rules: [], policyMode: 'Balanced', errorConfig: { logEnabled: true, dlqEnabled: false, dlqTopic: '', notifyChannel: 'None', notifyRecipients: '', includeRecordData: false } };
-
-    // Auto-generate IS_NOT_EMPTY rules for required target fields not already covered
-    if (targetBinding?.schemaPack?.fields) {
-      const existingFields = new Set((validationState.rules ?? []).map((r: any) => r.field));
-      const requiredFields = targetBinding.schemaPack.fields.filter((f) => f.required);
-      for (const field of requiredFields) {
-        if (!existingFields.has(field.path)) {
-          validationState.rules = validationState.rules ?? [];
-          validationState.rules.push({
-            id: `va_${field.path.replace(/[^a-zA-Z0-9]/g, '_')}`,
-            name: `${field.path} is required`,
-            field: field.path,
-            operator: 'IS_NOT_EMPTY',
-            value: '',
-            severity: 'Error',
-            enabled: true,
-            source: 'auto',
-          });
+    // Build baseline validation from template defaults without auto-creating extra rules.
+    const validationState = defaultMappings.validationBaseline
+      ? {
+          ...defaultMappings.validationBaseline,
+          rules: [...(defaultMappings.validationBaseline.rules ?? [])],
+          errorConfig: {
+            logEnabled: defaultMappings.validationBaseline.errorConfig?.logEnabled ?? true,
+            dlqEnabled: defaultMappings.validationBaseline.errorConfig?.dlqEnabled ?? false,
+            dlqTopic: defaultMappings.validationBaseline.errorConfig?.dlqTopic ?? '',
+            notifyChannel: defaultMappings.validationBaseline.errorConfig?.notifyChannel ?? 'None',
+            notifyRecipients: defaultMappings.validationBaseline.errorConfig?.notifyRecipients ?? '',
+            includeRecordData: defaultMappings.validationBaseline.errorConfig?.includeRecordData ?? false,
+          },
         }
-      }
-    }
+      : {
+          rules: [],
+          policyMode: 'Balanced',
+          errorConfig: {
+            logEnabled: true,
+            dlqEnabled: false,
+            dlqTopic: '',
+            notifyChannel: 'None',
+            notifyRecipients: '',
+            includeRecordData: false,
+          },
+        };
 
     // Build baseline trigger
     const triggerState = workflowStructure.triggerBaseline ?? {
@@ -140,28 +147,43 @@ export class IntegrationsService {
 
     // Build baseline response handling
     const responseHandlingState = defaultMappings.responseHandlingBaseline ?? {
-      successPolicy: '2xx only',
-      errorPolicy: 'Normalize & Route',
-      callbackEnabled: false,
-      callbackDestination: '',
-      callbackMethod: 'POST',
-      businessResponseMappingEnabled: false,
-      partialSuccessPolicy: 'All-or-nothing',
+      successCriteria: 'any_success',
+      storeResponse: true,
+      transformResponse: false,
+      outputToSource: 'auto_if_expected',
+      notificationEnabled: false,
+      notificationDestinationUrl: '',
+      notificationMethod: 'POST',
+      notificationOnSuccess: true,
+      notificationOnFailure: true,
+      notificationPayloadMode: 'standard_response',
+      businessErrorTranslationEnabled: false,
+      loggingLevel: 'Standard',
+      debugMode: false,
     };
 
     // Build baseline operations/monitoring
     const operationsState = defaultMappings.operationsBaseline ?? {
-      alertChannel: 'None',
-      alertDestination: '',
-      errorThresholdPercent: 5,
-      enableRetry: false,
-      maxRetries: 3,
-      retryDelayMs: 5000,
-      deadLetterEnabled: false,
-      deadLetterTopic: '',
-      telemetryMode: 'Standard',
-      diagnosticsLevel: 'Basic',
-      traceRetentionDays: 7,
+      storeRunHistory: true,
+      storeErrorDetails: true,
+      storePayloadSnapshots: false,
+      retentionDays: 30,
+      failureBehavior: 'retry',
+      retryAttempts: 3,
+      retryInterval: '5 min',
+      partialSuccessPolicy: 'fail_entire_transaction',
+      afterFinalFailureNotify: true,
+      afterFinalFailureMarkFailed: true,
+      afterFinalFailureMoveToQueue: false,
+      notifyOnFirstFailure: true,
+      notifyAfterFinalFailure: true,
+      notifyOnSuccess: false,
+      alertRecipients: '',
+      notificationType: 'None',
+      enableDetailedDiagnostics: false,
+      includePayloadInAlerts: false,
+      loggingLevel: 'Standard',
+      debugMode: false,
     };
 
     const targetProfileFamilyId =
@@ -263,13 +285,21 @@ export class IntegrationsService {
           integrationDefId: integration.id,
           version: 1,
           rules: {
-            create: defaultMappings.mappings.map((m: any) => ({
-              sourceField: m.sourceField ?? m.source ?? '',
-              targetField: m.targetField ?? m.target ?? '',
-              mappingType: m.mappingType ?? 'DIRECT',
-              transformConfig: m.transformConfig ?? undefined,
-              status: 'PENDING_REVIEW',
-            })),
+            create: defaultMappings.mappings.map((m: any) => {
+              const rawMappingType = String(m.mappingType ?? '').toUpperCase();
+              const supportedMappingTypes = ['DIRECT', 'CONSTANT', 'DERIVED', 'LOOKUP', 'CONDITIONAL'];
+              const mappingType = (supportedMappingTypes.includes(rawMappingType)
+                ? rawMappingType
+                : (m.transformConfig ? 'CONDITIONAL' : 'DIRECT')) as 'DIRECT' | 'CONSTANT' | 'DERIVED' | 'LOOKUP' | 'CONDITIONAL';
+
+              return {
+                sourceField: m.sourceField ?? m.source ?? '',
+                targetField: m.targetField ?? m.target ?? '',
+                mappingType,
+                transformConfig: m.transformConfig ?? undefined,
+                status: 'PENDING_REVIEW' as const,
+              };
+            }),
           },
         },
       });
@@ -695,13 +725,22 @@ export class IntegrationsService {
     const ms = (integration as any).mappingSets?.[0];
     const rules = ms?.rules ?? [];
 
+    const sourceState = (((integration as any).sourceState ?? {}) as Record<string, unknown>);
+    const targetState = (((integration as any).targetState ?? {}) as Record<string, unknown>);
+    const primarySource = ((sourceState.primary ?? {}) as Record<string, unknown>);
+    const primaryTarget = (Array.isArray(targetState.targets) ? targetState.targets[0] : null) as Record<string, unknown> | null;
+
     const yaml = this.camel.generateRestToRestYaml({
       routeId: `${integration.id}`,
       description: `${integration.name}`,
       sourceBaseUrl: 'https://{{source.base-url}}',
-      sourcePath: '{{source.path}}',
+      sourcePath: this.readNonEmptyString(primarySource.endpointPath) ?? '{{source.path}}',
+      sourceMethod: this.readNonEmptyString(primarySource.operation) ?? 'GET',
+      sourceQueryParams: this.readKeyValueEntries(primarySource.queryParams),
       targetBaseUrl: 'https://{{target.base-url}}',
-      targetPath: '{{target.path}}',
+      targetPath: this.readNonEmptyString(primaryTarget?.endpointPath) ?? '{{target.path}}',
+      targetMethod: this.readNonEmptyString(primaryTarget?.operation) ?? 'POST',
+      targetQueryParams: this.readKeyValueEntries(primaryTarget?.params),
       httpMethod: 'POST',
       fieldMappings: rules.map((r: any) => ({
         sourceField: r.sourceField,
@@ -810,28 +849,52 @@ export class IntegrationsService {
     return { testRunId: testRun.id, status: 'running' };
   }
 
+  async listTestRuns(integrationId: string, limit = 20) {
+    const take = Math.min(Math.max(limit ?? 20, 1), 100);
+    const testRuns = await this.prisma.integrationTestRun.findMany({
+      where: { integrationDefId: integrationId },
+      include: {
+        receipts: {
+          select: { id: true },
+          take: 1,
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take,
+    });
+
+    return testRuns.map((testRun) => this.formatTestRunResponse(testRun, false));
+  }
+
   /**
    * Poll for the status/result of a test run.
    */
   async getTestRunStatus(integrationId: string, testRunId: string) {
     const testRun = await this.prisma.integrationTestRun.findUnique({
       where: { id: testRunId },
+      include: {
+        receipts: {
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
 
     if (!testRun || testRun.integrationDefId !== integrationId) {
       throw new NotFoundException(`Test run ${testRunId} not found`);
     }
 
+    return this.formatTestRunResponse(testRun, true);
+  }
+
+  private formatTestRunResponse(testRun: any, includePayloads: boolean) {
     const isComplete = testRun.status === 'SUCCESS' || testRun.status === 'FAILED';
 
-    // Separate hard errors from per-record validation warnings
     const allMessages = (testRun.validationErrors as string[] | null) ?? [];
     const validationWarnings = allMessages.filter((m) => m.startsWith('Record "'));
     const hardErrors = allMessages.filter((m) => !m.startsWith('Record "'));
 
     const isPartialValidation = testRun.validationStatus === 'PARTIAL';
-
-    // Compute record counts from stored passed/failed payloads
     const passedPayload = testRun.passedPayloadJson as unknown[] | null;
     const failedPayload = testRun.failedPayloadJson as Array<{ record: Record<string, unknown>; errors: string[] }> | null;
     const passedCount = Array.isArray(passedPayload) ? passedPayload.length : 0;
@@ -848,6 +911,7 @@ export class IntegrationsService {
 
     return {
       testRunId: testRun.id,
+      createdAt: testRun.createdAt,
       status: isComplete ? (testRun.status === 'SUCCESS' ? 'success' : 'error') : 'running',
       summary,
       errors: hardErrors,
@@ -859,20 +923,23 @@ export class IntegrationsService {
         validationStatus: testRun.validationStatus,
         targetDeliveryStatus: testRun.targetDeliveryStatus,
       },
-      payloads: isComplete ? {
+      payloads: includePayloads && isComplete ? {
         source: this.truncatePayloadForResponse(testRun.sourcePayload, 5),
         outboundJson: testRun.outboundPayloadJson,
         passedJson: passedPayload,
         failedJson: failedPayload,
-        outboundRaw: null,
+        outboundRaw: testRun.outboundPayloadRaw ?? null,
       } : undefined,
-      targetResponse: isComplete ? {
+      targetResponse: includePayloads && isComplete ? {
         statusCode: testRun.targetResponseStatusCode,
         body: testRun.targetResponseBody,
         headers: testRun.targetResponseHeaders ?? {},
         targetType: testRun.targetType,
         targetName: testRun.targetName,
       } : undefined,
+      targetType: testRun.targetType,
+      targetName: testRun.targetName,
+      hasReceipt: Array.isArray(testRun.receipts) ? testRun.receipts.length > 0 : false,
       context: {},
       driftSuggestionsCreated: 0,
     };
@@ -900,6 +967,14 @@ export class IntegrationsService {
     const sourceState = (integration.sourceState as any) ?? {};
     const targetState = (integration.targetState as any) ?? {};
     const validationState = (integration.validationState as any) ?? { rules: [] };
+    const responseHandlingState = this.readJsonObject(integration.responseHandlingState);
+    const opsState = this.readJsonObject(integration.operationsState);
+    // Normalize: support both new field names and legacy field names from old saved data
+    const rhSuccessCriteria = String(responseHandlingState.successCriteria ?? 'any_success');
+    // Failure recovery fields now live in operationsState; fall back to responseHandlingState for legacy data
+    const rhFailureBehavior = String(opsState.failureBehavior ?? responseHandlingState.failureBehavior ?? 'retry');
+    const rhRetryAttempts = Number(opsState.retryAttempts ?? responseHandlingState.retryAttempts ?? 3);
+    const rhPartialPolicy = String(opsState.partialSuccessPolicy ?? responseHandlingState.partialSuccessPolicy ?? 'fail_entire_transaction');
 
     const resolvedTargetType =
       opts.targetType ??
@@ -1010,22 +1085,31 @@ export class IntegrationsService {
         transformType: String((rule.transformConfig as any)?.type ?? '').trim() || undefined,
         transformConfig: this.readJsonObject(rule.transformConfig),
       }));
+      const shouldPreferJsPreview = mappingRules.some((rule: any) => {
+        const sourceField = String(rule.sourceField ?? '');
+        const targetField = String(rule.targetField ?? '');
+        const mappingType = String(rule.mappingType ?? 'DIRECT').toUpperCase();
+        const transformType = String(this.readJsonObject(rule.transformConfig).type ?? '').toLowerCase();
+        return sourceField.includes('::') || targetField.includes('::') || ['CONSTANT', 'CONDITIONAL', 'DERIVED'].includes(mappingType) || ['constant', 'conditional', 'formula', 'filter'].includes(transformType);
+      });
 
       // Map each source record individually
       const mappedRecords: Record<string, unknown>[] = [];
       for (const sourceRecord of sourceRecords) {
+        const jsMapped = this.runJsDirectMappingFallback(sourceRecord, mappingRules);
         let mapped: Record<string, unknown> | null = null;
         try {
           mapped = await this.camel.runMappingPreview({
             sourcePayload: sourceRecord,
             fieldMappings,
           });
-          // Validate Camel output — reject if it returned literal expressions or Java-style stringified objects
-          if (mapped && this.isCamelOutputGarbage(mapped)) {
-            mapped = this.runJsDirectMappingFallback(sourceRecord, mappingRules);
+          if (shouldPreferJsPreview && jsMapped) {
+            mapped = jsMapped;
+          } else if (mapped && this.isCamelOutputGarbage(mapped) && jsMapped) {
+            mapped = jsMapped;
           }
         } catch {
-          mapped = this.runJsDirectMappingFallback(sourceRecord, mappingRules);
+          mapped = jsMapped;
         }
         if (mapped) {
           mappedRecords.push(mapped);
@@ -1065,7 +1149,6 @@ export class IntegrationsService {
 
       // Use passed records for delivery (all mapped records still stored for preview)
       mappedPayload = mappedRecords.length === 1 ? mappedRecords[0] : mappedRecords;
-      const deliverablePayload = passedRecords.length === 1 ? passedRecords[0] : passedRecords;
 
       if (failedRecordEntries.length === 0) {
         validationStatus = 'SUCCESS';
@@ -1075,8 +1158,18 @@ export class IntegrationsService {
         validationStatus = 'FAILED';
       }
 
-      // Deliver passed records to target (even if some records failed validation)
-      if (!opts.dryRun && passedRecords.length > 0) {
+      // Enforce partial success policy — support both new and legacy values
+      const shouldDeliverPartial = validationStatus === 'PARTIAL' && (rhPartialPolicy === 'allow_partial_success' || rhPartialPolicy === 'allow-partial');
+      const shouldDeliver = validationStatus === 'SUCCESS' || shouldDeliverPartial;
+      const recordsToDeliver = shouldDeliverPartial ? passedRecords : (validationStatus === 'SUCCESS' ? passedRecords : []);
+      const deliverablePayload = recordsToDeliver.length === 1 ? recordsToDeliver[0] : recordsToDeliver;
+
+      if (validationStatus === 'PARTIAL' && (rhPartialPolicy === 'fail_entire_transaction' || rhPartialPolicy === 'fail-all')) {
+        errors.push(`Partial success blocked by fail_entire_transaction policy (${failedRecordEntries.length} failed records)`);
+      }
+
+      // Deliver records to target
+      if (!opts.dryRun && shouldDeliver && recordsToDeliver.length > 0) {
         if (resolvedTargetType === 'JSON') {
           outboundPayloadRaw = JSON.stringify(deliverablePayload);
         } else {
@@ -1101,7 +1194,15 @@ export class IntegrationsService {
         targetResponseStatusCode = delivery.statusCode;
         targetResponseBody = delivery.body;
         targetResponseHeaders = delivery.headers;
-        targetDeliveryStatus = delivery.statusCode >= 200 && delivery.statusCode < 300 ? 'SUCCESS' : 'FAILED';
+
+        // Evaluate success based on configured success criteria
+        // Support both new values (only_2xx, any_success) and legacy (2xx, any)
+        if (rhSuccessCriteria === 'only_2xx' || rhSuccessCriteria === '2xx') {
+          targetDeliveryStatus = delivery.statusCode >= 200 && delivery.statusCode < 300 ? 'SUCCESS' : 'FAILED';
+        } else {
+          // 'any_success' / 'any' — any response from target counts as success
+          targetDeliveryStatus = delivery.statusCode < 500 ? 'SUCCESS' : 'FAILED';
+        }
 
         if (targetDeliveryStatus === 'FAILED') {
           errors.push(`Target delivery failed: HTTP ${delivery.statusCode}`);
@@ -1197,6 +1298,30 @@ export class IntegrationsService {
         /* non-blocking */
       });
 
+    // Fire notification webhook if configured — read new field names with legacy fallbacks
+    const notifEnabled = Boolean(responseHandlingState.notificationEnabled ?? responseHandlingState.callbackEnabled);
+    const notifDestination = String(responseHandlingState.notificationDestinationUrl ?? responseHandlingState.callbackDestination ?? '').trim();
+    if (notifEnabled && notifDestination) {
+      const isSuccess = testStatus === 'success';
+      const shouldFire =
+        (isSuccess && Boolean(responseHandlingState.notificationOnSuccess ?? responseHandlingState.callbackOnSuccess)) ||
+        (!isSuccess && Boolean(responseHandlingState.notificationOnFailure ?? responseHandlingState.callbackOnFailure));
+
+      if (shouldFire) {
+        await this.fireCallback({
+          destination: notifDestination,
+          method: String(responseHandlingState.notificationMethod ?? responseHandlingState.callbackMethod ?? 'POST'),
+          integrationId: id,
+          testRunId,
+          status: testStatus,
+          targetResponseStatusCode,
+          targetResponseBody,
+        }).catch((err) => {
+          this.logger.warn(`Callback delivery failed for ${id}: ${err instanceof Error ? err.message : err}`);
+        });
+      }
+    }
+
   }
 
   async previewPayloads(id: string) {
@@ -1231,6 +1356,15 @@ export class IntegrationsService {
     let targetError: string | null = null;
 
     if (previewSource) {
+      const shouldPreferJsPreview = mappingRules.some((rule: any) => {
+        const sourceField = String(rule.sourceField ?? '');
+        const targetField = String(rule.targetField ?? '');
+        const mappingType = String(rule.mappingType ?? 'DIRECT').toUpperCase();
+        const transformType = String(this.readJsonObject(rule.transformConfig).type ?? '').toLowerCase();
+        return sourceField.includes('::') || targetField.includes('::') || ['CONSTANT', 'CONDITIONAL', 'DERIVED'].includes(mappingType) || ['constant', 'conditional', 'formula', 'filter'].includes(transformType);
+      });
+      const jsPreview = this.runJsDirectMappingFallback(previewSource, mappingRules);
+
       try {
         targetPayload = await this.camel.runMappingPreview({
           sourcePayload: previewSource,
@@ -1241,15 +1375,15 @@ export class IntegrationsService {
             transformConfig: this.readJsonObject(rule.transformConfig),
           })),
         });
-        // Validate Camel output — reject if it returned literal expressions or Java-style stringified objects
-        if (targetPayload && this.isCamelOutputGarbage(targetPayload)) {
-          targetPayload = this.runJsDirectMappingFallback(previewSource, mappingRules);
+        if (shouldPreferJsPreview && jsPreview) {
+          targetPayload = jsPreview;
+        } else if (targetPayload && this.isCamelOutputGarbage(targetPayload) && jsPreview) {
+          targetPayload = jsPreview;
         }
       } catch (error) {
-        // Camel-runner unavailable — fall back to JS-based direct mapping
-        targetPayload = this.runJsDirectMappingFallback(previewSource, mappingRules);
+        targetPayload = jsPreview;
         if (targetPayload) {
-          targetError = null; // fallback succeeded, suppress the error
+          targetError = null;
         } else {
           const message = error instanceof Error ? error.message : 'Unknown Camel preview failure';
           targetError = `Preview mapping execution failed in camel-runner: ${message}`;
@@ -1267,6 +1401,7 @@ export class IntegrationsService {
       mappingSetId: latestSet?.id ?? null,
       mappingVersion: latestSet?.version ?? null,
       mappingRuleCount: mappingRules.length,
+      previewedAt: new Date().toISOString(),
     };
   }
 
@@ -1613,6 +1748,49 @@ export class IntegrationsService {
     };
   }
 
+  /**
+   * Fire a callback/notification webhook to the configured destination.
+   * Used after test runs complete to notify external systems of the outcome.
+   */
+  private async fireCallback(params: {
+    destination: string;
+    method: string;
+    integrationId: string;
+    testRunId: string;
+    status: string;
+    targetResponseStatusCode: number | null;
+    targetResponseBody: string | null;
+  }): Promise<void> {
+    const url = new URL(params.destination);
+
+    // Block internal/metadata URLs (SSRF protection)
+    const host = url.hostname;
+    if (['localhost', '127.0.0.1', '0.0.0.0', '[::1]'].includes(host) || host.startsWith('169.254.') || host.startsWith('10.') || host.startsWith('192.168.') || host.startsWith('metadata.')) {
+      this.logger.warn(`Callback blocked: destination ${params.destination} targets internal address`);
+      return;
+    }
+
+    const payload = {
+      event: params.status === 'success' ? 'integration.test.success' : 'integration.test.failure',
+      integrationId: params.integrationId,
+      testRunId: params.testRunId,
+      status: params.status,
+      targetResponseStatusCode: params.targetResponseStatusCode,
+      timestamp: new Date().toISOString(),
+    };
+
+    const method = params.method === 'PUT' ? 'PUT' : 'POST';
+
+    const response = await fetch(params.destination, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'X-Cogniviti-Event': payload.event },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    });
+
+    this.logger.log(`Callback delivered to ${params.destination}: HTTP ${response.status}`);
+  }
+
   private async applyRestAuthHeaders(
     config: Record<string, unknown>,
     headers: Record<string, string>,
@@ -1708,15 +1886,32 @@ export class IntegrationsService {
    * contains unevaluated expressions or Java HashMap.toString() stringified objects.
    */
   private isCamelOutputGarbage(mapped: Record<string, unknown>): boolean {
-    const values = Object.values(mapped);
-    for (const v of values) {
-      if (typeof v !== 'string') continue;
-      // Java HashMap.toString() pattern: {key=val, key2=val2}
-      if (/^\{[a-z][\w-]+=/.test(v) && v.includes(', ')) return true;
-      // Literal Camel simple-language expressions leaked through: "val == null ? null : val.toUpperCase()"
-      if (/== null \? null :.*\.(toUpperCase|toLowerCase|trim)\(\)/.test(v)) return true;
-    }
-    return false;
+    const inspect = (candidate: unknown): boolean => {
+      if (candidate == null) return false;
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        // Java HashMap.toString() pattern: {key=val, key2=val2}
+        if (/^\{[a-z][\w-]+=/.test(trimmed) && trimmed.includes(', ')) return true;
+        // Literal Camel simple-language expressions leaked through.
+        if (/== null \? null :.*\.(toUpperCase|toLowerCase|trim)\(\)/.test(trimmed)) return true;
+        // JSON-encoded transform objects leaked into output instead of evaluated values.
+        if ((trimmed.startsWith('{') || trimmed.startsWith('[')) && /"type"\s*:\s*"(constant|conditional|formula|lookup|concat|dateformat|filter)"/i.test(trimmed)) {
+          return true;
+        }
+      }
+      if (Array.isArray(candidate)) return candidate.some((item) => inspect(item));
+      if (candidate && typeof candidate === 'object') {
+        const obj = candidate as Record<string, unknown>;
+        const type = String(obj.type ?? '').toLowerCase();
+        if (['constant', 'conditional', 'formula', 'lookup', 'concat', 'dateformat', 'filter'].includes(type)) {
+          return true;
+        }
+        return Object.values(obj).some((item) => inspect(item));
+      }
+      return false;
+    };
+
+    return inspect(mapped);
   }
 
   /**
@@ -1728,90 +1923,92 @@ export class IntegrationsService {
     mappingRules: any[],
   ): Record<string, unknown> | null {
     try {
-      const target: Record<string, unknown> = {};
-
-      // Separate flat rules from array-wildcard rules (target contains [*])
-      const flatRules: any[] = [];
-      const arrayGroups = new Map<string, Array<{ sourceArrayPath: string; sourceSubPath: string; targetSubPath: string; rule: any }>>();
-
-      for (const rule of mappingRules) {
-        const sourceField = String(rule.sourceField ?? '');
-        const targetField = String(rule.targetField ?? '');
-        if (!sourceField || !targetField) continue;
-        const tMatch = targetField.match(/^(.+?)\[\*\]\.(.+)$/);
-        if (tMatch) {
-          const targetArrayPath = tMatch[1];
-          const targetSubPath = tMatch[2];
-          const sMatch = sourceField.match(/^(.+?)\[\*\]\.(.+)$/);
-          const sourceArrayPath = sMatch ? sMatch[1] : targetArrayPath;
-          const sourceSubPath = sMatch ? sMatch[2] : sourceField;
-          if (!arrayGroups.has(targetArrayPath)) arrayGroups.set(targetArrayPath, []);
-          arrayGroups.get(targetArrayPath)!.push({ sourceArrayPath, sourceSubPath, targetSubPath, rule });
-        } else {
-          flatRules.push(rule);
-        }
-      }
-
-      // Apply flat (header-level) rules
-      for (const rule of flatRules) {
-        const sourceField = String(rule.sourceField ?? '');
-        const targetField = String(rule.targetField ?? '');
-        let value = this.getValueByPath(sourcePayload, sourceField);
-        // If the resolved value is a non-array object, extract a sensible scalar
-        if (value && typeof value === 'object' && !Array.isArray(value)) {
-          const obj = value as Record<string, unknown>;
-          value = obj.code ?? obj.name ?? obj.value ?? obj.id ?? JSON.stringify(value);
-        }
-        const transformConfig = this.readJsonObject(rule.transformConfig);
-        if (Object.keys(transformConfig).length > 0) {
-          value = this.applyTransform(value, transformConfig, sourcePayload, sourceField);
-        }
-        this.setValueByPath(target, targetField, value);
-      }
-
-      // Apply array-wildcard rules — iterate source array, build target array
-      for (const [targetArrayPath, group] of arrayGroups) {
-        const sourceArrayPath = group[0].sourceArrayPath;
-        const sourceArray = this.getValueByPath(sourcePayload, sourceArrayPath);
-        if (!Array.isArray(sourceArray)) continue;
-
-        const targetArray: Record<string, unknown>[] = [];
-        for (const sourceItem of sourceArray) {
-          const targetItem: Record<string, unknown> = {};
-          for (const g of group) {
-            let value = this.getValueByPath(sourceItem, g.sourceSubPath);
-            // If the resolved value is a non-array object, extract a sensible scalar
-            if (value && typeof value === 'object' && !Array.isArray(value)) {
-              const obj = value as Record<string, unknown>;
-              value = obj.code ?? obj.name ?? obj.value ?? obj.id ?? JSON.stringify(value);
-            }
-            const transformConfig = this.readJsonObject(g.rule.transformConfig);
-            if (Object.keys(transformConfig).length > 0) {
-              value = this.applyTransform(value, transformConfig, sourceItem as any, g.sourceSubPath);
-            }
-            this.setValueByPath(targetItem, g.targetSubPath, value);
-          }
-          targetArray.push(targetItem);
-        }
-        this.setValueByPath(target, targetArrayPath, targetArray);
-      }
-
-      return target;
+      return this.executeMapping(sourcePayload, mappingRules);
     } catch {
       return null;
     }
   }
 
   private readJsonObject(value: unknown): Record<string, unknown> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return {};
+      if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+        try {
+          const parsed = JSON.parse(trimmed);
+          return this.readJsonObject(parsed);
+        } catch {
+          return {};
+        }
+      }
+      return {};
+    }
+    if (typeof value !== 'object' || Array.isArray(value)) {
       return {};
     }
     return value as Record<string, unknown>;
   }
 
+  private normalizeDataPath(pathValue: string): string {
+    return String(pathValue ?? '')
+      .replace(/::/g, '.')
+      .replace(/\[\*\]/g, '.*')
+      .replace(/\[(\d+)\]/g, '.$1')
+      .replace(/^\.+|\.+$/g, '');
+  }
+
+  private coercePreviewScalar(value: unknown): unknown {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      const obj = value as Record<string, unknown>;
+      return obj.code ?? obj.name ?? obj.value ?? obj.id ?? value;
+    }
+    return value;
+  }
+
   private readNonEmptyString(value: unknown): string | null {
     if (typeof value === 'string' && value.trim().length > 0) {
       return value.trim();
+    }
+    return null;
+  }
+
+  private readKeyValueEntries(value: unknown): Array<{ key: string; value: string }> {
+    if (!Array.isArray(value)) return [];
+    return value
+      .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object')
+      .map((entry) => ({
+        key: String(entry.key ?? '').trim(),
+        value: String(entry.value ?? ''),
+      }))
+      .filter((entry) => entry.key.length > 0);
+  }
+
+  private readNestedTransformString(
+    value: unknown,
+    preferredKeys: string[] = ['expression', 'rule', 'filter', 'value', 'constant'],
+    depth = 0,
+  ): string | null {
+    if (depth > 12 || value == null) return null;
+
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      if (trimmed.startsWith('{') || trimmed.startsWith('[') || (trimmed.startsWith('"') && trimmed.endsWith('"'))) {
+        try {
+          return this.readNestedTransformString(JSON.parse(trimmed), preferredKeys, depth + 1) ?? trimmed;
+        } catch {
+          return trimmed;
+        }
+      }
+      return trimmed;
+    }
+
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    for (const key of preferredKeys) {
+      const nested = this.readNestedTransformString(record[key], preferredKeys, depth + 1);
+      if (nested) return nested;
     }
     return null;
   }
@@ -1856,18 +2053,43 @@ export class IntegrationsService {
       }
     }
 
-    const normalizedPath = pathValue.replace(/\[\*\]/g, '.0').replace(/\[(\d+)\]/g, '.$1');
-    return pathValue.split('.').reduce((acc: any, key: string) => {
-      if (acc == null || typeof acc !== 'object') return null;
-      return acc[key];
-    }, input as any) ?? normalizedPath.split('.').reduce((acc: any, key: string) => {
-      if (acc == null || typeof acc !== 'object') return null;
-      return acc[key];
-    }, input as any);
+    const normalizedPath = this.normalizeDataPath(pathValue);
+    if (!normalizedPath) return null;
+
+    const walk = (current: unknown, keys: string[]): unknown => {
+      if (keys.length === 0) return current;
+      if (current == null) return null;
+
+      const [key, ...rest] = keys;
+
+      if (Array.isArray(current)) {
+        const items = key === '*'
+          ? current
+          : /^\d+$/.test(key)
+            ? [current[Number(key)]]
+            : current;
+
+        const results = items
+          .flatMap((item) => {
+            const next = key === '*' || /^\d+$/.test(key) ? walk(item, rest) : walk(item, [key, ...rest]);
+            return Array.isArray(next) ? next : [next];
+          })
+          .filter((item) => item != null && item !== '');
+
+        if (results.length === 0) return null;
+        return results.length === 1 ? results[0] : results;
+      }
+
+      if (typeof current !== 'object') return null;
+      return walk((current as Record<string, unknown>)[key], rest);
+    };
+
+    return walk(input, normalizedPath.split('.').filter(Boolean));
   }
 
   private setValueByPath(target: Record<string, unknown>, pathValue: string, value: unknown) {
-    const keys = pathValue.split('.').filter(Boolean);
+    const normalizedPath = this.normalizeDataPath(pathValue);
+    const keys = normalizedPath.split('.').filter(Boolean);
     if (keys.length === 0) return;
     let cursor: Record<string, unknown> = target;
     for (let i = 0; i < keys.length - 1; i += 1) {
@@ -1887,16 +2109,23 @@ export class IntegrationsService {
     sourcePayload: unknown,
     sourceField: string,
   ): unknown {
-    const kind = String(transformConfig.type ?? '').toLowerCase();
+    const normalizedTransform = this.readJsonObject(transformConfig);
+    const kind = String(normalizedTransform.type ?? '').toLowerCase();
     if (!kind) return value;
 
     if (kind === 'uppercase') return value == null ? value : String(value).toUpperCase();
     if (kind === 'lowercase') return value == null ? value : String(value).toLowerCase();
     if (kind === 'trim') return value == null ? value : String(value).trim();
-    if (kind === 'constant') return transformConfig.value ?? value;
+    if (kind === 'constant') {
+      return this.readNestedTransformString(normalizedTransform.value, ['value', 'constant'])
+        ?? this.readNestedTransformString(normalizedTransform.constant, ['value', 'constant'])
+        ?? normalizedTransform.value
+        ?? normalizedTransform.constant
+        ?? value;
+    }
 
     if (kind === 'lookup') {
-      const table = this.readJsonObject(transformConfig.table);
+      const table = this.readJsonObject(normalizedTransform.table);
       const lookupKey = value == null ? '' : String(value);
       if (Object.prototype.hasOwnProperty.call(table, lookupKey)) {
         return table[lookupKey];
@@ -1905,28 +2134,33 @@ export class IntegrationsService {
     }
 
     if (kind === 'concat') {
-      const separator = this.readNonEmptyString(transformConfig.separator) ?? ' ';
-      const configuredFields = Array.isArray(transformConfig.sourceFields)
-        ? transformConfig.sourceFields.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
+      const separator = this.readNonEmptyString(normalizedTransform.separator) ?? ' ';
+      const configuredFields = Array.isArray(normalizedTransform.sourceFields)
+        ? normalizedTransform.sourceFields.filter((f): f is string => typeof f === 'string' && f.trim().length > 0)
         : [];
       const fields = configuredFields.length > 0 ? configuredFields : [sourceField];
       const parts = fields
         .map((path) => this.getValueByPath(sourcePayload, path))
+        .flatMap((item) => Array.isArray(item) ? item : [item])
         .filter((item) => item != null && String(item).length > 0)
-        .map((item) => String(item));
+        .map((item) => String(this.coercePreviewScalar(item)));
       return parts.join(separator);
     }
 
     if (kind === 'dateformat') {
-      const fromFormat = this.readNonEmptyString(transformConfig.fromFormat) ?? 'YYYY-MM-DD';
-      const toFormat = this.readNonEmptyString(transformConfig.toFormat) ?? 'YYYY-MM-DD';
+      const fromFormat = this.readNonEmptyString(normalizedTransform.fromFormat) ?? 'YYYY-MM-DD';
+      const toFormat = this.readNonEmptyString(normalizedTransform.toFormat) ?? 'YYYY-MM-DD';
       return this.convertDateFormat(value, fromFormat, toFormat);
     }
 
+    if (kind === 'filter') {
+      return this.applyFilterTransform(value, normalizedTransform, sourcePayload, sourceField);
+    }
+
     if (kind === 'formula' || kind === 'conditional') {
-      const expression = this.readNonEmptyString(transformConfig.expression);
+      const expression = this.readNestedTransformString(normalizedTransform, ['expression', 'rule']);
       if (!expression) return value;
-      return this.evaluateExpression(expression, value, sourcePayload);
+      return this.evaluateExpression(expression, value, sourcePayload, sourceField);
     }
 
     return value;
@@ -1960,9 +2194,134 @@ export class IntegrationsService {
       .replace(/DD/gi, parsed.d);
   }
 
-  private evaluateExpression(expression: string, value: unknown, sourcePayload: unknown): unknown {
+  private applyFilterTransform(
+    value: unknown,
+    transformConfig: Record<string, unknown>,
+    sourcePayload: unknown,
+    sourceField: string,
+  ): unknown {
+    const filterExpression = this.readNestedTransformString(transformConfig, ['filter', 'expression', 'rule']);
+    if (!filterExpression) return value;
+
+    const normalizedSourceField = this.normalizeDataPath(sourceField);
+    const [rootArrayPath, ...restParts] = normalizedSourceField.split('.');
+    if (!rootArrayPath) return value;
+
+    const candidates = this.getValueByPath(sourcePayload, rootArrayPath);
+    if (!Array.isArray(candidates)) return value;
+
+    const remainderPath = restParts.join('.');
+    const matched = candidates.filter((item) => this.evaluateBooleanConditions(filterExpression, item, value, sourceField, rootArrayPath));
+    if (matched.length === 0) return value;
+
+    if (!remainderPath) {
+      return matched.length === 1 ? matched[0] : matched;
+    }
+
+    const resolved = matched
+      .flatMap((item) => {
+        const candidate = this.getValueByPath(item, remainderPath);
+        return Array.isArray(candidate) ? candidate : [candidate];
+      })
+      .filter((item) => item != null && item !== '');
+
+    if (resolved.length === 0) return value;
+    if (resolved.length === 1) return this.coercePreviewScalar(resolved[0]);
+    return resolved.map((item) => this.coercePreviewScalar(item));
+  }
+
+  private evaluateBooleanConditions(
+    expression: string,
+    sourcePayload: unknown,
+    value: unknown,
+    sourceField: string,
+    stripPrefix?: string,
+  ): boolean {
+    return expression
+      .split(/\s*&&\s*/)
+      .every((clause) => this.evaluateSingleCondition(clause.trim(), sourcePayload, value, sourceField, stripPrefix));
+  }
+
+  private evaluateSingleCondition(
+    clause: string,
+    sourcePayload: unknown,
+    value: unknown,
+    sourceField: string,
+    stripPrefix?: string,
+  ): boolean {
+    const match = clause.match(/^(.+?)\s*(===|==|!==|!=)\s*(.+)$/);
+    if (!match) return Boolean(value);
+
+    const left = this.resolveConditionToken(match[1], sourcePayload, value, sourceField, stripPrefix);
+    const right = this.resolveConditionToken(match[3], sourcePayload, value, sourceField, stripPrefix, true);
+    const operator = match[2];
+    const isEqual = this.compareConditionValues(left, right);
+    return operator === '!=' || operator === '!==' ? !isEqual : isEqual;
+  }
+
+  private resolveConditionToken(
+    token: string,
+    sourcePayload: unknown,
+    value: unknown,
+    sourceField: string,
+    stripPrefix?: string,
+    preferLiteral = false,
+  ): unknown {
+    const trimmed = token.trim();
+    const literal = this.parseConditionLiteral(trimmed);
+    if (preferLiteral || literal.matched) return literal.value;
+
+    if (trimmed === 'value') return value;
+    if (trimmed === sourceField || trimmed === this.normalizeDataPath(sourceField)) return value;
+
+    const normalized = this.normalizeDataPath(trimmed);
+    const normalizedPrefix = stripPrefix ? `${this.normalizeDataPath(stripPrefix)}.` : '';
+    const localPath = normalizedPrefix && normalized.startsWith(normalizedPrefix)
+      ? normalized.slice(normalizedPrefix.length)
+      : normalized;
+
+    const resolved = this.getValueByPath(sourcePayload, localPath);
+    return resolved == null ? trimmed : resolved;
+  }
+
+  private parseConditionLiteral(token: string): { matched: boolean; value: unknown } {
+    const trimmed = token.trim();
+    if (trimmed === 'true') return { matched: true, value: true };
+    if (trimmed === 'false') return { matched: true, value: false };
+    if (trimmed === 'null') return { matched: true, value: null };
+    if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+      return { matched: true, value: trimmed.slice(1, -1) };
+    }
+    if (/^-?\d+(\.\d+)?$/.test(trimmed)) return { matched: true, value: Number(trimmed) };
+    return { matched: false, value: trimmed };
+  }
+
+  private compareConditionValues(left: unknown, right: unknown): boolean {
+    if (Array.isArray(left)) return left.some((item) => this.compareConditionValues(item, right));
+    if (Array.isArray(right)) return right.some((item) => this.compareConditionValues(left, item));
+    if (typeof left === 'boolean' || typeof right === 'boolean') return Boolean(left) === Boolean(right);
+    if (typeof left === 'number' || typeof right === 'number') return Number(left) === Number(right);
+    return String(left ?? '') === String(right ?? '');
+  }
+
+  private evaluateExpression(expression: string, value: unknown, sourcePayload: unknown, sourceField = ''): unknown {
+    const trimmed = expression.trim();
+    const ternary = trimmed.match(/^(.*)\?(.*):(.*)$/);
+    if (ternary) {
+      const [, conditionPart, truePart, falsePart] = ternary;
+      const conditionPassed = this.evaluateBooleanConditions(conditionPart.trim(), sourcePayload, value, sourceField);
+      const chosen = conditionPassed ? truePart.trim() : falsePart.trim();
+      const literal = this.parseConditionLiteral(chosen);
+      if (literal.matched) return literal.value;
+    }
+
     try {
-      const fn = new Function('value', 'record', `return (${expression});`);
+      let prepared = trimmed;
+      const aliases = [sourceField, this.normalizeDataPath(sourceField)].filter((alias) => alias && alias.length > 0);
+      for (const alias of aliases) {
+        prepared = prepared.split(alias).join('value');
+      }
+      const fn = new Function('value', 'record', `return (${prepared});`);
       return fn(value, sourcePayload);
     } catch {
       return value;
@@ -2008,5 +2367,496 @@ export class IntegrationsService {
     }
 
     throw new BadRequestException('workspaceId or workspaceSlug is required');
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // NODE-LEVEL DIAGNOSTICS — per-node test actions
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * TRIGGER — Test Trigger: Validate the trigger configuration is well-formed
+   * and simulate a trigger invocation (cron parse, webhook reachability, etc.)
+   */
+  async testTrigger(id: string) {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    const triggerState = this.readJsonObject(integration.triggerState);
+    const triggerType = String(triggerState.triggerType ?? 'Manual');
+    const checks: { check: string; status: 'pass' | 'fail' | 'warn'; detail: string }[] = [];
+
+    if (triggerType === 'Schedule / Cron') {
+      const cron = String(triggerState.cronExpression ?? '').trim();
+      if (!cron) {
+        checks.push({ check: 'Cron expression', status: 'fail', detail: 'Empty cron expression' });
+      } else {
+        // Basic cron validation: 5 or 6 fields separated by spaces
+        const parts = cron.split(/\s+/);
+        if (parts.length >= 5 && parts.length <= 7) {
+          checks.push({ check: 'Cron expression', status: 'pass', detail: `Valid format: "${cron}" (${parts.length} fields)` });
+        } else {
+          checks.push({ check: 'Cron expression', status: 'fail', detail: `Invalid cron: "${cron}" (${parts.length} fields, expected 5-7)` });
+        }
+      }
+      const tz = String(triggerState.timezone ?? '').trim();
+      checks.push(tz
+        ? { check: 'Timezone', status: 'pass', detail: tz }
+        : { check: 'Timezone', status: 'warn', detail: 'No timezone set — will use server default (UTC)' }
+      );
+    } else if (triggerType === 'Webhook') {
+      const webhookPath = String(triggerState.webhookPath ?? '').trim();
+      if (!webhookPath) {
+        checks.push({ check: 'Webhook path', status: 'fail', detail: 'No webhook path configured' });
+      } else {
+        checks.push({ check: 'Webhook path', status: 'pass', detail: webhookPath });
+      }
+      const method = String(triggerState.webhookMethod ?? 'POST');
+      checks.push({ check: 'Webhook method', status: 'pass', detail: method });
+    } else {
+      // Manual
+      const manualEnabled = Boolean(triggerState.manualExecutionEnabled);
+      checks.push(manualEnabled
+        ? { check: 'Manual execution', status: 'pass', detail: 'Manual execution is enabled' }
+        : { check: 'Manual execution', status: 'fail', detail: 'Manual execution is disabled' }
+      );
+    }
+
+    const overallStatus = checks.some(c => c.status === 'fail') ? 'fail' : checks.some(c => c.status === 'warn') ? 'warn' : 'pass';
+
+    return {
+      triggerType,
+      status: overallStatus,
+      checks,
+      testedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * TRIGGER — View Last Invocation: Return the most recent test run or workflow run
+   */
+  async viewLastInvocation(id: string) {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    // Get the most recent test run
+    const lastTestRun = await this.prisma.integrationTestRun.findFirst({
+      where: { integrationDefId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    if (!lastTestRun) {
+      return { hasInvocation: false, message: 'No test runs found for this integration.' };
+    }
+
+    return {
+      hasInvocation: true,
+      testRunId: lastTestRun.id,
+      status: lastTestRun.status,
+      createdAt: lastTestRun.createdAt.toISOString(),
+      sourceFetchStatus: lastTestRun.sourceFetchStatus,
+      mappingStatus: lastTestRun.mappingStatus,
+      validationStatus: lastTestRun.validationStatus,
+      targetDeliveryStatus: lastTestRun.targetDeliveryStatus,
+      normalizedErrorSummary: lastTestRun.normalizedErrorSummary,
+    };
+  }
+
+  /**
+   * SOURCE / TARGET — Test Connection: delegates to ConnectionsService
+   * Resolves the connection ID from the integration's source or target state.
+   */
+  async testNodeConnection(id: string, node: 'source' | 'target') {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    let connectionId: string | null = null;
+    if (node === 'source') {
+      connectionId = integration.sourceConnectionId;
+      if (!connectionId) {
+        const sourceState = this.readJsonObject(integration.sourceState);
+        const primary = sourceState?.primary as Record<string, unknown> | undefined;
+        connectionId = String(primary?.connectionId ?? '') || null;
+      }
+    } else {
+      connectionId = integration.targetConnectionId;
+      if (!connectionId) {
+        const targetState = this.readJsonObject(integration.targetState);
+        const targets = Array.isArray(targetState?.targets) ? targetState.targets : [];
+        connectionId = String(targets[0]?.connectionId ?? '') || null;
+      }
+    }
+
+    if (!connectionId) {
+      return { status: 'error', message: `No ${node} connection configured for this integration.`, testedAt: new Date().toISOString() };
+    }
+
+    // Detect demo / internal targets (downloadable JSON/XML) — skip real connection test
+    if (connectionId === 'INTERNAL_DEMO') {
+      const targetState = this.readJsonObject(integration.targetState);
+      const targets = Array.isArray(targetState?.targets) ? targetState.targets : [];
+      const family = String(targets[0]?.connectionFamily ?? '');
+      const targetName = String(targets[0]?.name ?? targets[0]?.connectionName ?? 'Demo Target');
+      return {
+        connectionId,
+        status: 'success',
+        message: `${targetName} is a built-in demo receiver — no external connection required.`,
+        connectionFamily: family,
+        demo: true,
+        testedAt: new Date().toISOString(),
+      };
+    }
+
+    try {
+      const result = await this.connections.testConnectionDefault(connectionId);
+      return result;
+    } catch (err) {
+      return {
+        connectionId,
+        status: 'error',
+        message: err instanceof Error ? err.message : `Failed to test ${node} connection`,
+        testedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * SOURCE — Fetch Sample: Uses the existing fetchLiveSourcePayload to get a sample record
+   */
+  async fetchSourceSample(id: string) {
+    const integration = await this.prisma.integrationDefinition.findUnique({
+      where: { id },
+      include: {
+        mappingSets: {
+          include: { rules: { orderBy: { sortOrder: 'asc' } } },
+          orderBy: { version: 'desc' },
+          take: 1,
+        },
+      },
+    });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    try {
+      const result = await this.fetchLiveSourcePayload(integration);
+      const sample = this.unwrapPreviewSourceRecord(result.payload);
+      return {
+        status: 'success',
+        payload: sample,
+        recordCount: Array.isArray(result.payload) ? (result.payload as unknown[]).length : 1,
+        fetchedAt: new Date().toISOString(),
+      };
+    } catch (err) {
+      return {
+        status: 'error',
+        message: err instanceof Error ? err.message : 'Failed to fetch source sample',
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  /**
+   * MAPPING — Run Preview: Fetches source + applies mapping to produce a preview output
+   * Reuses the existing previewPayloads method.
+   */
+  async runMappingPreview(id: string) {
+    return this.previewPayloads(id);
+  }
+
+  /**
+   * VALIDATION — Validate Sample: Accepts a sample payload and runs validation rules
+   */
+  async validateSample(id: string, samplePayload: Record<string, unknown>) {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    const validationState = this.readJsonObject(integration.validationState);
+    const rules = Array.isArray(validationState.rules) ? validationState.rules : [];
+    const policyMode = String(validationState.policyMode ?? 'Balanced');
+
+    if (rules.length === 0) {
+      return { status: 'pass', message: 'No validation rules configured.', results: [], testedAt: new Date().toISOString() };
+    }
+
+    const { errors, warnings } = this.executeValidation(samplePayload, { rules: rules as any });
+
+    const ruleResults = rules.filter((r: any) => r && r.enabled !== false).map((rule: any) => {
+      const fieldValue = this.getValueByPath(samplePayload, rule.field ?? '');
+      let passed = true;
+
+      if (rule.field && rule.operator) {
+        const ruleValue = Array.isArray(rule.value) ? rule.value : String(rule.value ?? '');
+        switch (rule.operator) {
+          case 'IS_NOT_EMPTY': passed = fieldValue !== null && fieldValue !== undefined && fieldValue !== ''; break;
+          case 'EQUALS': passed = String(fieldValue) === String(ruleValue); break;
+          case 'NOT_EQUALS': passed = String(fieldValue) !== String(ruleValue); break;
+          case 'GREATER_THAN': passed = Number(fieldValue) > Number(ruleValue); break;
+          case 'LESS_THAN': passed = Number(fieldValue) < Number(ruleValue); break;
+          case 'IN': {
+            const list = Array.isArray(ruleValue) ? ruleValue : String(ruleValue).split(',').map((s: string) => s.trim());
+            passed = list.includes(String(fieldValue)); break;
+          }
+          case 'NOT_IN': {
+            const list = Array.isArray(ruleValue) ? ruleValue : String(ruleValue).split(',').map((s: string) => s.trim());
+            passed = !list.includes(String(fieldValue)); break;
+          }
+          case 'MATCHES': try { passed = new RegExp(String(ruleValue)).test(String(fieldValue ?? '')); } catch { passed = false; } break;
+          case 'LENGTH_MIN': passed = String(fieldValue ?? '').length >= Number(ruleValue); break;
+          case 'LENGTH_MAX': passed = String(fieldValue ?? '').length <= Number(ruleValue); break;
+          default: passed = true;
+        }
+      }
+
+      return {
+        ruleId: rule.id,
+        ruleName: rule.name || `Rule on ${rule.field}`,
+        field: rule.field,
+        operator: rule.operator,
+        severity: rule.severity ?? 'Error',
+        passed,
+        message: passed ? 'Passed' : `${rule.field} ${rule.operator} check failed`,
+      };
+    });
+
+    const failedCount = ruleResults.filter((r: any) => !r.passed).length;
+    const status = failedCount === 0 ? 'pass' : errors.length > 0 ? 'fail' : 'warn';
+
+    return {
+      status,
+      policyMode,
+      totalRules: ruleResults.length,
+      passed: ruleResults.filter((r: any) => r.passed).length,
+      failed: failedCount,
+      errorCount: errors.length,
+      warningCount: warnings.length,
+      results: ruleResults,
+      testedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * RESPONSE — Preview Response Handling: Returns the current response handling config
+   * along with a simulated example of how a success/error response would be processed
+   */
+  async previewResponseHandling(id: string) {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    const responseState = this.readJsonObject(integration.responseHandlingState);
+    const targetState = this.readJsonObject(integration.targetState);
+    const targets = Array.isArray(targetState?.targets) ? targetState.targets : [];
+    const primaryTarget = targets[0] as Record<string, unknown> | undefined;
+
+    // Get last test run for real response data
+    const lastTestRun = await this.prisma.integrationTestRun.findFirst({
+      where: { integrationDefId: id, status: { in: ['SUCCESS', 'FAILED'] } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      config: {
+        successCriteria: String(responseState.successCriteria ?? 'any_success'),
+        storeResponse: Boolean(responseState.storeResponse),
+        transformResponse: Boolean(responseState.transformResponse),
+        outputToSource: String(responseState.outputToSource ?? 'auto_if_expected'),
+        notificationEnabled: Boolean(responseState.notificationEnabled ?? responseState.callbackEnabled),
+        notificationDestinationUrl: String(responseState.notificationDestinationUrl ?? responseState.callbackDestination ?? ''),
+        notificationMethod: String(responseState.notificationMethod ?? responseState.callbackMethod ?? 'POST'),
+        notificationOnSuccess: Boolean(responseState.notificationOnSuccess ?? responseState.callbackOnSuccess),
+        notificationOnFailure: Boolean(responseState.notificationOnFailure ?? responseState.callbackOnFailure),
+        notificationPayloadMode: String(responseState.notificationPayloadMode ?? 'standard_response'),
+        businessErrorTranslationEnabled: Boolean(responseState.businessErrorTranslationEnabled ?? responseState.errorTranslationEnabled),
+        loggingLevel: String(responseState.loggingLevel ?? 'Standard'),
+        debugMode: Boolean(responseState.debugMode),
+      },
+      lastResponse: lastTestRun ? {
+        testRunId: lastTestRun.id,
+        status: lastTestRun.status,
+        statusCode: lastTestRun.targetResponseStatusCode,
+        body: lastTestRun.targetResponseBody,
+        createdAt: lastTestRun.createdAt.toISOString(),
+      } : null,
+      targetName: primaryTarget?.name ?? primaryTarget?.connectionName ?? 'Not configured',
+      testedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * OPERATIONS — Health Check: Aggregated health assessment of all integration components
+   */
+  async runHealthCheck(id: string) {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    const checks: { component: string; status: 'healthy' | 'warning' | 'error' | 'unknown'; detail: string }[] = [];
+
+    // Check source connection health
+    const sourceState = this.readJsonObject(integration.sourceState);
+    const primarySrc = sourceState?.primary as Record<string, unknown> | undefined;
+    const sourceConnId = integration.sourceConnectionId ?? (String(primarySrc?.connectionId ?? '') || null);
+    if (sourceConnId) {
+      const lastSourceTest = await this.prisma.connectionTestHistory.findFirst({
+        where: { connectionDefId: sourceConnId },
+        orderBy: { testedAt: 'desc' },
+      });
+      if (lastSourceTest) {
+        checks.push({
+          component: 'Source Connection',
+          status: lastSourceTest.success ? 'healthy' : 'error',
+          detail: lastSourceTest.success ? `Healthy (last tested ${lastSourceTest.testedAt.toISOString()})` : (lastSourceTest.errorMessage ?? 'Last test failed'),
+        });
+      } else {
+        checks.push({ component: 'Source Connection', status: 'unknown', detail: 'Never tested' });
+      }
+    } else {
+      checks.push({ component: 'Source Connection', status: 'error', detail: 'No source connection configured' });
+    }
+
+    // Check target connection health
+    const targetState = this.readJsonObject(integration.targetState);
+    const targets = Array.isArray(targetState?.targets) ? targetState.targets : [];
+    const targetConnId = integration.targetConnectionId ?? (String((targets[0] as any)?.connectionId ?? '') || null);
+    if (targetConnId === 'INTERNAL_DEMO') {
+      const demoName = String((targets[0] as any)?.name ?? 'Demo Target');
+      checks.push({ component: 'Target Connection', status: 'healthy', detail: `${demoName} — built-in demo receiver (no external connection)` });
+    } else if (targetConnId) {
+      const lastTargetTest = await this.prisma.connectionTestHistory.findFirst({
+        where: { connectionDefId: targetConnId },
+        orderBy: { testedAt: 'desc' },
+      });
+      if (lastTargetTest) {
+        checks.push({
+          component: 'Target Connection',
+          status: lastTargetTest.success ? 'healthy' : 'error',
+          detail: lastTargetTest.success ? `Healthy (last tested ${lastTargetTest.testedAt.toISOString()})` : (lastTargetTest.errorMessage ?? 'Last test failed'),
+        });
+      } else {
+        checks.push({ component: 'Target Connection', status: 'unknown', detail: 'Never tested' });
+      }
+    } else {
+      checks.push({ component: 'Target Connection', status: 'warning', detail: 'No target connection configured (using demo target)' });
+    }
+
+    // Check last test run
+    const lastTestRun = await this.prisma.integrationTestRun.findFirst({
+      where: { integrationDefId: id },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (lastTestRun) {
+      const ageMs = Date.now() - lastTestRun.createdAt.getTime();
+      const ageHours = Math.round(ageMs / 3600000);
+      checks.push({
+        component: 'Last E2E Test',
+        status: lastTestRun.status === 'SUCCESS' ? 'healthy' : lastTestRun.status === 'RUNNING' ? 'warning' : 'error',
+        detail: `${lastTestRun.status} — ${ageHours}h ago (${lastTestRun.createdAt.toISOString()})`,
+      });
+    } else {
+      checks.push({ component: 'Last E2E Test', status: 'unknown', detail: 'No test runs recorded' });
+    }
+
+    // Check mapping completeness
+    const mappingSet = await this.prisma.mappingSet.findFirst({
+      where: { integrationDefId: id },
+      include: { rules: true },
+      orderBy: { version: 'desc' },
+    });
+    if (mappingSet && mappingSet.rules.length > 0) {
+      checks.push({ component: 'Mapping Rules', status: 'healthy', detail: `${mappingSet.rules.length} rules configured (v${mappingSet.version})` });
+    } else {
+      checks.push({ component: 'Mapping Rules', status: 'error', detail: 'No mapping rules configured' });
+    }
+
+    // Check validation rules
+    const validationState = this.readJsonObject(integration.validationState);
+    const valRules = Array.isArray(validationState.rules) ? validationState.rules : [];
+    const enabledRules = valRules.filter((r: any) => r && r.enabled !== false);
+    checks.push({
+      component: 'Validation Rules',
+      status: enabledRules.length > 0 ? 'healthy' : 'warning',
+      detail: enabledRules.length > 0 ? `${enabledRules.length} enabled rules` : 'No validation rules enabled',
+    });
+
+    // Check readiness
+    checks.push({
+      component: 'Readiness',
+      status: integration.readinessStatus === 'READY_FOR_RELEASE_REVIEW' || integration.readinessStatus === 'TEST_PASSED'
+        ? 'healthy'
+        : integration.readinessStatus === 'INCOMPLETE'
+        ? 'warning'
+        : 'unknown',
+      detail: String(integration.readinessStatus ?? 'UNKNOWN'),
+    });
+
+    const overallStatus = checks.some(c => c.status === 'error') ? 'error' : checks.some(c => c.status === 'warning') ? 'warning' : 'healthy';
+
+    return {
+      status: overallStatus,
+      checks,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * OPERATIONS — View Latest Alerts: Recent test failures, drift suggestions, profile notices
+   */
+  async viewLatestAlerts(id: string) {
+    const integration = await this.prisma.integrationDefinition.findUnique({ where: { id } });
+    if (!integration) throw new NotFoundException(`Integration ${id} not found`);
+
+    const alerts: { type: string; severity: 'info' | 'warning' | 'error'; message: string; createdAt: string }[] = [];
+
+    // Recent failed test runs
+    const failedRuns = await this.prisma.integrationTestRun.findMany({
+      where: { integrationDefId: id, status: 'FAILED' },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+    for (const run of failedRuns) {
+      alerts.push({
+        type: 'test_failure',
+        severity: 'error',
+        message: run.normalizedErrorSummary ?? `E2E test failed (${run.id})`,
+        createdAt: run.createdAt.toISOString(),
+      });
+    }
+
+    // Profile update notices
+    const notices = await this.prisma.profileUpdateNotice.findMany({
+      where: { integrationDefId: id, status: { not: 'ACKNOWLEDGED' } },
+      orderBy: { createdAt: 'desc' },
+      take: 5,
+    });
+    for (const notice of notices) {
+      alerts.push({
+        type: 'profile_notice',
+        severity: notice.impactLevel === 'BLOCKING' ? 'error' : notice.impactLevel === 'WARNING' ? 'warning' : 'info',
+        message: `${notice.direction} profile update: ${notice.impactLevel} impact`,
+        createdAt: notice.createdAt.toISOString(),
+      });
+    }
+
+    // Drift suggestions
+    if (integration.targetProfileId) {
+      const drifts = await this.prisma.driftSuggestion.findMany({
+        where: { targetProfileId: integration.targetProfileId, status: 'NEW' },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      });
+      for (const drift of drifts) {
+        alerts.push({
+          type: 'drift_suggestion',
+          severity: 'warning',
+          message: `Drift detected on ${drift.fieldPath}: ${drift.suggestionType}`,
+          createdAt: drift.createdAt.toISOString(),
+        });
+      }
+    }
+
+    // Sort all by date descending
+    alerts.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return {
+      alertCount: alerts.length,
+      alerts: alerts.slice(0, 15),
+      checkedAt: new Date().toISOString(),
+    };
   }
 }

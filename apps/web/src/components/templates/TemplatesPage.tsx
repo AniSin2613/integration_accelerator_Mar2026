@@ -23,11 +23,15 @@ interface TemplatesPageProps {
   viewState: TemplatesViewState;
 }
 
-const SOURCE_OPTION_ORDER: Exclude<TemplateSourceFilter, 'All Sources'>[] = ['Coupa', 'GEP', 'REST API', 'File', 'DB', 'S3'];
+const SOURCE_OPTION_ORDER: Exclude<TemplateSourceFilter, 'All Sources'>[] = ['Coupa', 'REST', 'GEP', 'REST API', 'File', 'DB', 'S3'];
 const TARGET_OPTION_ORDER: Exclude<TemplateTargetFilter, 'All Targets'>[] = [
+  'SAP',
+  'Coupa',
+  'JSON File',
+  'XML File',
+  'REST',
   'Demo JSON',
   'Demo XML',
-  'SAP',
   'Dynamics',
   'ERP',
   'REST API',
@@ -100,14 +104,14 @@ export function TemplatesPage({ viewState }: TemplatesPageProps) {
           const bo = (t.businessObject ?? 'API Payload').replace(/_/g, ' ');
           const useCaseLabel = bo.includes('INVOICE') ? 'Invoices'
             : bo.includes('PURCHASE_ORDER') || bo.includes('Purchase Order') ? 'Purchase Orders'
-            : bo.includes('VENDOR') ? 'Vendor Sync'
+            : bo.includes('VENDOR') || bo.includes('SUPPLIER') ? 'Vendor Sync'
             : `${srcSystem} to ${tgtSystem}`;
           return {
             id: t.id,
             name: t.name,
             group: isPrebuilt ? 'Prebuilt' : 'Generic',
             categoryLabel: isPrebuilt ? 'Prebuilt Template' : 'Generic Template',
-            templateTypeTag: isPrebuilt ? 'Business Accelerator' : 'Technical Starter',
+            templateTypeTag: isPrebuilt ? 'Prebuilt' : 'Generic',
             description: t.description ?? '',
             source: srcSystem,
             target: tgtSystem,

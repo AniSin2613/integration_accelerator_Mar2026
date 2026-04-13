@@ -1,12 +1,10 @@
 'use client';
 
-export type WorkbenchTabId = 'design' | 'output' | 'validation' | 'test';
+export type WorkbenchTabId = 'design' | 'diagnostics';
 
 const TAB_LABELS: Record<WorkbenchTabId, string> = {
   design: 'Design',
-  output: 'Step Output',
-  validation: 'Validation',
-  test: 'Test Results',
+  diagnostics: 'Run / Diagnostics',
 };
 
 interface WorkbenchTabsProps {
@@ -15,7 +13,7 @@ interface WorkbenchTabsProps {
 }
 
 export function WorkbenchTabs({ activeTab, onTabChange }: WorkbenchTabsProps) {
-  const tabs: WorkbenchTabId[] = ['design', 'output', 'validation', 'test'];
+  const tabs: WorkbenchTabId[] = ['design', 'diagnostics'];
 
   return (
     <div className="px-5 border-t border-b border-border-soft bg-slate-50/40" role="tablist" aria-label="Workbench tabs">

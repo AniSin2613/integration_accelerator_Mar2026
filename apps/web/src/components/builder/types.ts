@@ -175,29 +175,62 @@ export interface TargetGroupConfig {
 }
 
 export interface ResponseHandlingConfig {
-  successPolicy: '2xx only' | '2xx + business ack';
-  errorPolicy: 'Normalize & Route' | 'Pass-through';
-  callbackEnabled: boolean;
-  callbackDestination: string;
-  callbackMethod: 'POST' | 'PUT';
-  businessResponseMappingEnabled: boolean;
-  partialSuccessPolicy: 'All-or-nothing' | 'Partial success allowed' | 'Compensate failed targets';
+  // Success handling
+  successCriteria: 'any_success' | 'only_2xx';
+  storeResponse: boolean;
+  transformResponse: boolean;
+
+  // Output to source
+  outputToSource: 'auto_if_expected' | 'no_response';
+
+  // Notify another system
+  notificationEnabled: boolean;
+  notificationDestinationUrl: string;
+  notificationMethod: 'POST' | 'PUT';
+  notificationOnSuccess: boolean;
+  notificationOnFailure: boolean;
+  notificationPayloadMode: 'standard_response' | 'custom_payload';
+  notificationCustomPayload?: string;
+
+  // Inline mapping editors (optional JSON strings)
+  responseTransformRules?: string;
+
+  // Advanced
+  businessErrorTranslationEnabled: boolean;
+  loggingLevel: 'Minimal' | 'Standard' | 'Verbose';
+  debugMode: boolean;
 }
 
 export type AlertChannel = 'Email' | 'Slack' | 'Webhook' | 'None';
 
 export interface MonitoringConfig {
-  alertChannel: AlertChannel;
-  alertDestination: string;
-  errorThresholdPercent: number;
-  enableRetry: boolean;
-  maxRetries: number;
-  retryDelayMs: number;
-  deadLetterEnabled: boolean;
-  deadLetterTopic: string;
-  telemetryMode: 'Standard' | 'Enhanced';
-  diagnosticsLevel: 'Basic' | 'Detailed';
-  traceRetentionDays: number;
+  // Run History
+  storeRunHistory: boolean;
+  storeErrorDetails: boolean;
+  storePayloadSnapshots: boolean;
+  retentionDays: number;
+
+  // Failure Recovery
+  failureBehavior: 'retry' | 'stop' | 'move_to_failed_queue';
+  retryAttempts: number;
+  retryInterval: '1 min' | '5 min' | '15 min' | '30 min' | '1 hour';
+  partialSuccessPolicy: 'fail_entire_transaction' | 'allow_partial_success';
+  afterFinalFailureNotify: boolean;
+  afterFinalFailureMarkFailed: boolean;
+  afterFinalFailureMoveToQueue: boolean;
+
+  // Alerts
+  notifyOnFirstFailure: boolean;
+  notifyAfterFinalFailure: boolean;
+  notifyOnSuccess: boolean;
+  alertRecipients: string;
+  notificationType: AlertChannel;
+
+  // Advanced Monitoring
+  enableDetailedDiagnostics: boolean;
+  includePayloadInAlerts: boolean;
+  loggingLevel: 'Minimal' | 'Standard' | 'Verbose';
+  debugMode: boolean;
 }
 
 export interface BuilderState {
@@ -294,11 +327,10 @@ export function isTargetComplete(t: TargetGroupConfig): boolean {
 }
 
 export function isResponseHandlingComplete(r: ResponseHandlingConfig): boolean {
-  if (!r.businessResponseMappingEnabled) return false;
-  if (r.callbackEnabled && r.callbackDestination.trim() === '') return false;
+  if (r.notificationEnabled && r.notificationDestinationUrl.trim() === '') return false;
   return true;
 }
 
 export function isMonitoringComplete(m: MonitoringConfig): boolean {
-  return m.alertChannel !== 'None' || m.enableRetry || m.deadLetterEnabled;
+  return m.storeRunHistory || m.notificationType !== 'None' || m.failureBehavior === 'retry';
 }

@@ -818,6 +818,165 @@ async function seedCoupaDemoTemplates(prismaClient: PrismaClient) {
     };
   };
 
+  // Reusable prebuilt-template guard + helper.
+  // Use this checklist whenever adding a new prebuilt template:
+  // 1) class must be CERTIFIED so it appears in the Prebuilt catalog
+  // 2) source and target schema packs must both be bound
+  // 3) source/target/validation/response/operations baselines must all be present
+  // 4) mappingType values must be valid Prisma enums only
+  // 5) target requiredness should only be set intentionally, never inferred by accident
+  const VALID_MAPPING_TYPES = new Set(['DIRECT', 'CONSTANT', 'DERIVED', 'LOOKUP', 'CONDITIONAL']);
+
+  type SeedTemplateMapping = {
+    sourceField: string;
+    targetField: string;
+    mappingType?: string;
+    transformConfig?: Record<string, unknown>;
+  };
+
+  const normalizeSeedMappings = (templateId: string, mappings: SeedTemplateMapping[]) => {
+    return mappings.map((mapping, index) => {
+      const normalizedType = String(mapping.mappingType ?? (mapping.transformConfig ? 'CONDITIONAL' : 'DIRECT')).toUpperCase();
+      if (!VALID_MAPPING_TYPES.has(normalizedType)) {
+        throw new Error(
+          `[seed] Template ${templateId} has unsupported mappingType "${mapping.mappingType}" at index ${index}. ` +
+          `Allowed values: ${Array.from(VALID_MAPPING_TYPES).join(', ')}`,
+        );
+      }
+      return {
+        ...mapping,
+        mappingType: normalizedType as 'DIRECT' | 'CONSTANT' | 'DERIVED' | 'LOOKUP' | 'CONDITIONAL',
+      };
+    });
+  };
+
+  const upsertCertifiedPrebuiltTemplate = async (params: {
+    id: string;
+    name: string;
+    description: string;
+    sourceSystem: string;
+    targetSystem: string;
+    businessObject: 'INVOICE' | 'PURCHASE_ORDER' | 'SUPPLIER' | 'SUPPLIER_INFORMATION' | 'VENDOR';
+    version: string;
+    sourceSchemaPackId: string;
+    targetSchemaPackId: string;
+    sourceProfileFamilyId?: string | null;
+    sourceProfileVersionId?: string | null;
+    targetProfileFamilyId?: string | null;
+    targetProfileVersionId?: string | null;
+    workflowStructure: Record<string, unknown>;
+    defaultMappings: {
+      mappings: SeedTemplateMapping[];
+      validationBaseline: Record<string, unknown>;
+      responseHandlingBaseline: Record<string, unknown>;
+      operationsBaseline: Record<string, unknown>;
+      sourceStateBaseline: Record<string, unknown>;
+      targetStateBaseline: Record<string, unknown>;
+    };
+  }) => {
+    const missing: string[] = [];
+    if (!params.sourceSchemaPackId) missing.push('sourceSchemaPackId');
+    if (!params.targetSchemaPackId) missing.push('targetSchemaPackId');
+    if (!params.defaultMappings.sourceStateBaseline) missing.push('defaultMappings.sourceStateBaseline');
+    if (!params.defaultMappings.targetStateBaseline) missing.push('defaultMappings.targetStateBaseline');
+    if (!params.defaultMappings.validationBaseline) missing.push('defaultMappings.validationBaseline');
+    if (!params.defaultMappings.responseHandlingBaseline) missing.push('defaultMappings.responseHandlingBaseline');
+    if (!params.defaultMappings.operationsBaseline) missing.push('defaultMappings.operationsBaseline');
+    if (missing.length > 0) {
+      throw new Error(`[seed] Template ${params.id} is missing required prebuilt config: ${missing.join(', ')}`);
+    }
+
+    const normalizedMappings = normalizeSeedMappings(params.id, params.defaultMappings.mappings ?? []);
+
+    const template = await prismaClient.templateDefinition.upsert({
+      where: { id: params.id },
+      update: {
+        name: params.name,
+        description: params.description,
+        class: 'CERTIFIED',
+        sourceSystem: params.sourceSystem,
+        targetSystem: params.targetSystem,
+        businessObject: params.businessObject,
+      },
+      create: {
+        id: params.id,
+        name: params.name,
+        description: params.description,
+        class: 'CERTIFIED',
+        sourceSystem: params.sourceSystem,
+        targetSystem: params.targetSystem,
+        businessObject: params.businessObject,
+      },
+    });
+
+    const version = await prismaClient.templateVersion.upsert({
+      where: { templateDefId_version: { templateDefId: template.id, version: params.version } },
+      update: {
+        isLatest: true,
+        publishedAt: new Date(),
+        sourceProfileFamilyId: params.sourceProfileFamilyId ?? null,
+        sourceProfileVersionId: params.sourceProfileVersionId ?? null,
+        targetProfileFamilyId: params.targetProfileFamilyId ?? null,
+        targetProfileVersionId: params.targetProfileVersionId ?? null,
+        workflowStructure: params.workflowStructure as any,
+        defaultMappings: {
+          ...params.defaultMappings,
+          mappings: normalizedMappings,
+        } as any,
+      },
+      create: {
+        templateDefId: template.id,
+        version: params.version,
+        isLatest: true,
+        publishedAt: new Date(),
+        sourceProfileFamilyId: params.sourceProfileFamilyId ?? null,
+        sourceProfileVersionId: params.sourceProfileVersionId ?? null,
+        targetProfileFamilyId: params.targetProfileFamilyId ?? null,
+        targetProfileVersionId: params.targetProfileVersionId ?? null,
+        workflowStructure: params.workflowStructure as any,
+        defaultMappings: {
+          ...params.defaultMappings,
+          mappings: normalizedMappings,
+        } as any,
+      },
+    });
+
+    await prismaClient.schemaPackBinding.upsert({
+      where: {
+        templateVersionId_schemaPackId_role: {
+          templateVersionId: version.id,
+          schemaPackId: params.sourceSchemaPackId,
+          role: 'SOURCE',
+        },
+      },
+      update: {},
+      create: {
+        templateVersionId: version.id,
+        schemaPackId: params.sourceSchemaPackId,
+        role: 'SOURCE',
+      },
+    });
+
+    await prismaClient.schemaPackBinding.upsert({
+      where: {
+        templateVersionId_schemaPackId_role: {
+          templateVersionId: version.id,
+          schemaPackId: params.targetSchemaPackId,
+          role: 'TARGET',
+        },
+      },
+      update: {},
+      create: {
+        templateVersionId: version.id,
+        schemaPackId: params.targetSchemaPackId,
+        role: 'TARGET',
+      },
+    });
+
+    console.log(`  ✓ Prebuilt template: ${template.name} v${version.version}`);
+    return { template, version };
+  };
+
   // Shared workflow structure for all demo templates
   const demoWorkflowStructure = {
     boxes: [
@@ -915,28 +1074,43 @@ async function seedCoupaDemoTemplates(prismaClient: PrismaClient) {
 
   // Shared response handling baseline
   const sharedResponseHandlingBaseline = {
-    successPolicy: '2xx only',
-    errorPolicy: 'Normalize & Route',
-    callbackEnabled: false,
-    callbackDestination: '',
-    callbackMethod: 'POST',
-    businessResponseMappingEnabled: false,
-    partialSuccessPolicy: 'All-or-nothing',
+    successCriteria: 'any_success',
+    storeResponse: true,
+    transformResponse: false,
+    outputToSource: 'auto_if_expected',
+    notificationEnabled: false,
+    notificationDestinationUrl: '',
+    notificationMethod: 'POST',
+    notificationOnSuccess: false,
+    notificationOnFailure: true,
+    notificationPayloadMode: 'standard_response',
+    businessErrorTranslationEnabled: false,
+    loggingLevel: 'Standard',
+    debugMode: false,
   };
 
   // Shared operations baseline
   const sharedOperationsBaseline = {
-    alertChannel: 'None',
-    alertDestination: '',
-    errorThresholdPercent: 5,
-    enableRetry: true,
-    maxRetries: 2,
-    retryDelayMs: 2000,
-    deadLetterEnabled: false,
-    deadLetterTopic: '',
-    telemetryMode: 'Standard',
-    diagnosticsLevel: 'Basic',
-    traceRetentionDays: 7,
+    storeRunHistory: true,
+    storeErrorDetails: true,
+    storePayloadSnapshots: false,
+    retentionDays: 30,
+    failureBehavior: 'retry',
+    retryAttempts: 3,
+    retryInterval: '5 min',
+    partialSuccessPolicy: 'fail_entire_transaction',
+    afterFinalFailureNotify: true,
+    afterFinalFailureMarkFailed: true,
+    afterFinalFailureMoveToQueue: false,
+    notifyOnFirstFailure: true,
+    notifyAfterFinalFailure: true,
+    notifyOnSuccess: false,
+    alertRecipients: '',
+    notificationType: 'None',
+    enableDetailedDiagnostics: false,
+    includePayloadInAlerts: false,
+    loggingLevel: 'Standard',
+    debugMode: false,
   };
 
   // Shared Coupa source state baseline (user selects connection; object/endpoint pre-configured)
@@ -1340,6 +1514,334 @@ async function seedCoupaDemoTemplates(prismaClient: PrismaClient) {
     },
   });
   console.log(`  ✓ Template: ${coupaXmlTemplate.name} v${coupaXmlVersion.version}`);
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // COUPA SIM → COUPA SUPPLIER  (Prebuilt template)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ── Source profile: Coupa SupplierInformation ──────────────────────────────
+  const simSourceSchemaPack = await prismaClient.schemaPack.findUnique({
+    where: { id: 'sp_coupa_supplier_info_v1' },
+    include: { fields: { orderBy: { path: 'asc' } } },
+  });
+
+  const simSourceProfile = simSourceSchemaPack
+    ? await upsertPublishedProfileBaseline({
+        key: 'source_coupa_supplier_info_v1',
+        direction: 'SOURCE',
+        system: 'Coupa',
+        interfaceName: 'SupplierInformation',
+        object: 'SupplierInformation',
+        profileName: 'Coupa Supplier Information Source Profile',
+        description: 'Platform-owned baseline profile for the Coupa Supplier Information Management (SIM) interface.',
+        version: simSourceSchemaPack.version || '1.0.0',
+        fields: simSourceSchemaPack.fields.map((field) => ({
+          path: field.path,
+          dataType: field.dataType,
+          required: field.required,
+          description: field.description ?? undefined,
+          example: field.example ?? undefined,
+        })),
+      })
+    : null;
+
+  // ── Target profile: Coupa Supplier ─────────────────────────────────────────
+  // IMPORTANT: Target requiredness is NOT auto-set from the OpenAPI schema.
+  // All fields default to required=false. Requiredness will be provided separately.
+  const supplierTargetSchemaPack = await prismaClient.schemaPack.findUnique({
+    where: { id: 'sp_coupa_supplier_v1' },
+    include: { fields: { orderBy: { path: 'asc' } } },
+  });
+
+  const supplierTargetProfile = supplierTargetSchemaPack
+    ? await upsertPublishedDemoTargetProfile({
+        id: 'target_coupa_supplier_v1',
+        schemaPackId: supplierTargetSchemaPack.id,
+        system: 'Coupa',
+        object: 'Supplier',
+        name: 'Coupa Supplier Target Profile',
+        description: 'Platform-owned baseline profile for the Coupa Supplier interface. Target requiredness is NOT auto-set from schema.',
+        version: supplierTargetSchemaPack.version || '1.0.0',
+        // Override ALL required flags to false — requiredness will be provided separately
+        fields: supplierTargetSchemaPack.fields.map((field) => ({
+          path: field.path,
+          dataType: field.dataType,
+          required: false, // NEVER auto-set from schema
+          businessName: field.path,
+          description: field.description ?? undefined,
+          example: field.example ?? undefined,
+        })),
+      })
+    : null;
+
+  // ── Source state baseline: Coupa /supplier_information GET ──────────────────
+  const simSourceStateBaseline = {
+    primary: {
+      connectionId: '',
+      connectionName: '(Select Coupa connection)',
+      connectionFamily: 'REST_OPENAPI',
+      healthStatus: 'UNCONFIGURED',
+      businessObject: 'SupplierInformation',
+      operation: 'GET',
+      endpointPath: '/api/supplier_information',
+      queryParams: [
+        { key: 'order_by', value: 'updated_at' },
+        { key: 'dir', value: 'desc' },
+        { key: 'return_object', value: 'limited' },
+      ],
+      headers: [],
+      customParams: [],
+      paginationEnabled: true,
+      paginationStrategy: 'Page',
+      pageSize: 50,
+      incrementalReadMode: 'Off',
+    },
+    enrichmentSources: [],
+    processingPattern: 'Single Source',
+  };
+
+  // ── Target state baseline: Coupa /suppliers PUT ────────────────────────────
+  const supplierTargetStateBaseline = {
+    targets: [
+      {
+        id: 't1',
+        name: 'Coupa Supplier',
+        priority: 1,
+        connectionId: '',
+        connectionName: '(Select Coupa connection)',
+        connectionFamily: 'REST_OPENAPI',
+        healthStatus: 'UNCONFIGURED',
+        businessObject: 'Supplier',
+        operation: 'PUT',
+        endpointPath: '/api/suppliers',
+        writeMode: 'Upsert',
+        upsertKeyField: 'number',
+        batchSize: 1,
+        params: [],
+        conflictHandling: 'Overwrite',
+      },
+    ],
+    deliveryPattern: 'Single Target',
+    targetProfileState: supplierTargetProfile
+      ? {
+          profileFamilyId: supplierTargetProfile.profileFamilyId,
+          baselineProfileVersionId: supplierTargetProfile.baselineProfileVersionId,
+          status: 'UP_TO_DATE',
+        }
+      : null,
+  };
+
+  // ── Mapping baseline (from Coupa SIM→Supplier mapping workbook) ────────────
+  const simToSupplierMappings = [
+    { sourceField: 'name', targetField: 'name', mappingType: 'DIRECT' as const },
+    { sourceField: 'display-name', targetField: 'display-name', mappingType: 'DIRECT' as const },
+    { sourceField: 'supplier-number', targetField: 'number', mappingType: 'DIRECT' as const },
+    {
+      sourceField: 'fed-reportable',
+      targetField: 'status',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'CONDITIONAL',
+        description: "If fed-reportable=true → status='inactive'; if false → status='active'",
+        rule: "fed-reportable == true ? 'inactive' : 'active'",
+      },
+    },
+    { sourceField: 'content-groups::name', targetField: 'content-groups', mappingType: 'DIRECT' as const },
+    { sourceField: 'payment-term::code', targetField: 'payment-terms', mappingType: 'DIRECT' as const },
+    { sourceField: 'po-method', targetField: 'po-method', mappingType: 'DIRECT' as const },
+    { sourceField: 'po-change-method', targetField: 'po-change-method', mappingType: 'DIRECT' as const },
+    { sourceField: 'po-email', targetField: 'po-email', mappingType: 'DIRECT' as const },
+    {
+      sourceField: 'supplier-information-contacts::email',
+      targetField: 'primary-contact::email',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map contact email where supplier-information-contacts.kind = Primary',
+        filter: "supplier-information-contacts.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-contacts::name-given',
+      targetField: 'primary-contact::name-given',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map contact first name where supplier-information-contacts.kind = Primary',
+        filter: "supplier-information-contacts.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-contacts::name-family',
+      targetField: 'primary-contact::name-family',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map contact last name where supplier-information-contacts.kind = Primary',
+        filter: "supplier-information-contacts.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::street-address',
+      targetField: 'primary-address::street1',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map address street1 where supplier-information-addresses.kind = Primary',
+        filter: "supplier-information-addresses.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::street-address2',
+      targetField: 'primary-address::street2',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map address street2 where supplier-information-addresses.kind = Primary',
+        filter: "supplier-information-addresses.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::city',
+      targetField: 'primary-address::city',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map address city where supplier-information-addresses.kind = Primary',
+        filter: "supplier-information-addresses.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::state-region',
+      targetField: 'primary-address::state',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map address state where supplier-information-addresses.kind = Primary',
+        filter: "supplier-information-addresses.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::postal-code',
+      targetField: 'primary-address::postal-code',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map address postal code where supplier-information-addresses.kind = Primary',
+        filter: "supplier-information-addresses.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::country::code',
+      targetField: 'primary-address::country::code',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map address country code where supplier-information-addresses.kind = Primary',
+        filter: "supplier-information-addresses.kind == 'Primary'",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::supplier-information-tax-registrations::number',
+      targetField: 'primary-address::vat-number',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map VAT number where addresses.kind = Primary AND tax-registrations.local = false',
+        filter: "supplier-information-addresses.kind == 'Primary' && supplier-information-tax-registrations.local == false",
+      },
+    },
+    {
+      sourceField: 'supplier-information-addresses::supplier-information-tax-registrations::country::code',
+      targetField: 'primary-address::vat-country::code',
+      mappingType: 'DIRECT' as const,
+    },
+    {
+      sourceField: 'supplier-information-addresses::supplier-information-tax-registrations::number',
+      targetField: 'primary-address::local-tax-number',
+      mappingType: 'CONDITIONAL' as const,
+      transformConfig: {
+        type: 'FILTER',
+        description: 'Map local tax number where addresses.kind = Primary AND tax-registrations.local = true',
+        filter: "supplier-information-addresses.kind == 'Primary' && supplier-information-tax-registrations.local == true",
+      },
+    },
+    { sourceField: 'allow-inv-from-connect', targetField: 'allow-inv-from-connect', mappingType: 'DIRECT' as const },
+    { sourceField: 'buyer-hold', targetField: 'buyer-hold', mappingType: 'DIRECT' as const },
+    { sourceField: 'allow-inv-no-backing-doc-from-connect', targetField: 'allow-inv-no-backing-doc-from-connect', mappingType: 'DIRECT' as const },
+    { sourceField: 'allow-inv-unbacked-lines-from-connect', targetField: 'allow-inv-unbacked-lines-from-connect', mappingType: 'DIRECT' as const },
+  ];
+
+  // ── Validation baseline (SIM-specific) ─────────────────────────────────────
+  const simValidationBaseline = {
+    policyMode: 'Balanced',
+    errorConfig: {
+      logEnabled: true,
+      dlqEnabled: false,
+      dlqTopic: '',
+      notifyChannel: 'None',
+      notifyRecipients: '',
+      includeRecordData: false,
+    },
+    rules: [
+      {
+        id: 'v1',
+        name: 'SIM record name must be present',
+        field: 'name',
+        operator: 'IS_NOT_EMPTY',
+        value: '',
+        severity: 'Error',
+        enabled: true,
+        source: 'auto',
+      },
+      {
+        id: 'v2',
+        name: 'Supplier number must be present',
+        field: 'supplier-number',
+        operator: 'IS_NOT_EMPTY',
+        value: '',
+        severity: 'Error',
+        enabled: true,
+        source: 'auto',
+      },
+      {
+        id: 'v3',
+        name: 'Target payload must not be empty',
+        field: '__payload',
+        operator: 'IS_NOT_EMPTY',
+        value: '',
+        severity: 'Error',
+        enabled: true,
+        source: 'auto',
+      },
+    ],
+  };
+
+  // ── Template definition ────────────────────────────────────────────────────
+  await upsertCertifiedPrebuiltTemplate({
+    id: 'tpl_coupa_sim_to_supplier',
+    name: 'Coupa SIM → Coupa Supplier',
+    description: 'Fetch recently added or updated supplier information records from Coupa SIM, map them to Coupa Supplier fields, apply basic transformations, and send them to Coupa Supplier.',
+    sourceSystem: 'Coupa',
+    targetSystem: 'Coupa',
+    businessObject: 'SUPPLIER_INFORMATION',
+    version: '1.0.0',
+    sourceSchemaPackId: simSourceSchemaPack?.id ?? 'sp_coupa_supplier_info_v1',
+    targetSchemaPackId: supplierTargetSchemaPack?.id ?? 'sp_coupa_supplier_v1',
+    sourceProfileFamilyId: simSourceProfile?.familyId ?? null,
+    sourceProfileVersionId: simSourceProfile?.baselineProfileVersionId ?? null,
+    targetProfileFamilyId: supplierTargetProfile?.profileFamilyId ?? null,
+    targetProfileVersionId: supplierTargetProfile?.baselineProfileVersionId ?? null,
+    workflowStructure: demoWorkflowStructure,
+    defaultMappings: {
+      mappings: simToSupplierMappings,
+      validationBaseline: simValidationBaseline,
+      responseHandlingBaseline: sharedResponseHandlingBaseline,
+      operationsBaseline: sharedOperationsBaseline,
+      sourceStateBaseline: simSourceStateBaseline,
+      targetStateBaseline: supplierTargetStateBaseline,
+    },
+  });
 }
 
 main()

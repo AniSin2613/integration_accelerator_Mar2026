@@ -6,9 +6,10 @@ import { AuthModule } from '../auth/auth.module';
 import { CamelModule } from '../camel/camel.module';
 import { TargetProfilesModule } from '../target-profiles/target-profiles.module';
 import { ProfilesModule } from '../profiles/profiles.module';
+import { ConnectionsModule } from '../connections/connections.module';
 
 @Module({
-  imports: [PrismaModule, AuthModule, CamelModule, TargetProfilesModule, ProfilesModule],
+  imports: [PrismaModule, AuthModule, CamelModule, TargetProfilesModule, ProfilesModule, ConnectionsModule],
   controllers: [IntegrationsController],
   providers: [IntegrationsService],
   exports: [IntegrationsService],
