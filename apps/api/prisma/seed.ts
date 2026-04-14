@@ -15,7 +15,9 @@
 
 import { PrismaClient } from '@prisma/client';
 import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
 import { seedCoupaSchemas } from './seed-coupa-schemas';
+import { authConfig } from '../src/common/config/auth.config';
 
 const prisma = new PrismaClient();
 
@@ -197,16 +199,20 @@ async function main() {
   console.log(`  Environments: DEV (${envDev.id}), TEST (${envTest.id}), PROD (${envProd.id})`);
 
   // ── Users ─────────────────────────────────────────────────────────────────
-  // NOTE: passwordHash is null here — auth stub validates against a dev token.
-  // Real password hashing (bcrypt/argon2) will be added with full auth.
+  // Hash the super admin password using bcrypt
+  const adminPasswordHash = await bcrypt.hash(
+    authConfig.superAdminInitialPassword,
+    authConfig.bcryptRounds,
+  );
+
   const adminUser = await prisma.user.upsert({
-    where: { email: 'admin@acme.example' },
-    update: {},
+    where: { email: 'animesh@cognivitilabs.com' },
+    update: { passwordHash: adminPasswordHash },
     create: {
       tenantId: tenant.id,
-      email: 'admin@acme.example',
-      name: 'Alex Admin',
-      passwordHash: null,
+      email: 'animesh@cognivitilabs.com',
+      name: 'Animesh',
+      passwordHash: adminPasswordHash,
     },
   });
 

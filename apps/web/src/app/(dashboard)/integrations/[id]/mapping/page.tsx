@@ -9,6 +9,7 @@ import { TransformEditorSheet } from '@/components/mapping-studio/TransformEdito
 import { PreviewPanel } from '@/components/mapping-studio/PreviewPanel';
 import { CopilotPanel } from '@/components/mapping-studio/CopilotPanel';
 import { api } from '@/lib/api-client';
+import { notify } from '@/lib/notify';
 
 interface PreviewPayloadResponse {
   sourcePayload: unknown;
@@ -772,10 +773,10 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
         await loadPreview();
       }
       setUnsavedChanges(false);
-      window.alert('Mappings saved successfully.');
+      notify.success('Mappings saved successfully.');
     } catch (error) {
       console.error('Failed to save mapping:', error);
-      window.alert('Failed to save mappings. Please check API logs and try again.');
+      notify.error('Failed to save mappings. Please check API logs and try again.');
     }
   };
 
@@ -791,6 +792,12 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
 
   const handleValidate = () => {
     const issues: string[] = [];
+
+    // Guard: no mappings at all
+    if (mappingConfig.mappings.length === 0) {
+      issues.push('No mappings defined. Add at least one mapping before validating.');
+    }
+
     const mappedTargets = new Set(mappingConfig.mappings.map((m) => m.targetField));
 
     targetSchema
@@ -818,9 +825,9 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
 
     setValidationMessages(issues);
     if (issues.length === 0) {
-      window.alert('Mapping-local validation passed. No blockers found.');
+      notify.success('Mapping-local validation passed. No blockers found.');
     } else {
-      window.alert(`Mapping-local validation found ${issues.length} issue(s).`);
+      notify.warning(`Mapping-local validation found ${issues.length} issue(s).`);
     }
   };
 
@@ -852,20 +859,19 @@ export default function MappingStudioPage({ params }: { params: { id: string } }
     if (suggestions.length === 0) {
       const allRequiredAlreadyMapped = requiredTargets.every((f) => mappedTargets.has(f.path));
       if (allRequiredAlreadyMapped && requiredTargets.length > 0) {
-        window.alert('Integration Copilot: All required target fields already have mappings. Use the Ask AI panel to get suggestions for optional fields.');
+        notify.info('Integration Copilot: All required target fields already have mappings. Use the Ask AI panel to get suggestions for optional fields.');
       } else {
-        window.alert(
-          'Integration Copilot: No confident suggestions could be found for the remaining unmapped required fields.\n\nThe field names in your source schema are too different from the target fields for automatic matching. Try mapping them manually or use Ask AI to describe the relationship.'
+        notify.info(
+          'Integration Copilot: No confident suggestions found for the remaining unmapped required fields. Try mapping them manually or use Ask AI to describe the relationship.'
         );
       }
       return;
     }
 
     // Confidence scores are shown on each mapping bar — keep the dialog simple.
-    const shouldApply = window.confirm(
-      `Integration Copilot found ${suggestions.length} suggestion(s) for unmapped required fields.\n\nApply all and mark for review?\n\nConfidence scores will appear on each mapping row.`
+    notify.info(
+      `Integration Copilot found ${suggestions.length} suggestion(s) for unmapped required fields. Applying and marking for review.`
     );
-    if (!shouldApply) return;
 
     // Compute new rows synchronously from the current snapshot.
     // window.confirm is a blocking call — the user cannot trigger a second "Suggest Required"

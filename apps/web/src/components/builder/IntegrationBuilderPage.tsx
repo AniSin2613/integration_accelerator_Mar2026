@@ -15,7 +15,7 @@ import {
   isMonitoringComplete,
   getSourceTargetWarning,
 } from './types';
-import { createDemoBuilderState, createBlankBuilderState, DEFAULT_STEPS } from './mockData';
+import { createBlankBuilderState, DEFAULT_STEPS } from './defaults';
 import { BuilderTopBar } from './BuilderTopBar';
 import { StoryboardCanvas } from './StoryboardCanvas';
 import { WorkbenchTabs, type WorkbenchTabId } from '@/components/ui/WorkbenchTabs';
@@ -852,6 +852,7 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
   const [rightPanelExpanded, setRightPanelExpanded] = useState(true);
   const [rightPanelWidth, setRightPanelWidth] = useState(380);
   const [mobileUnsupported, setMobileUnsupported] = useState(forceMobileUnsupported);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [readiness, setReadiness] = useState<{ readinessStatus: string; checks: Record<string, unknown> } | null>(null);
   const [profileStatuses, setProfileStatuses] = useState<{
     source: ProfileUpdateStatus;
@@ -1023,8 +1024,8 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
         loadedState.steps = recomputeSteps(loadedState);
         setState(loadedState);
       } catch {
-        // Fallback to demo state if API fails
-        setState(createDemoBuilderState(integrationId));
+        // Show error state instead of silently loading fake data
+        setLoadError('Failed to load integration. The API server may be unreachable.');
         setAvailableConnections([]);
         setProfileStatuses(null);
       }
@@ -1324,6 +1325,22 @@ export default function IntegrationBuilderPage({ integrationId, forceMobileUnsup
           This integration builder is currently optimized for desktop and large tablet screens.
           Please reopen on a larger device for full node editing and workflow configuration.
         </p>
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center bg-background-light px-6 text-center">
+        <span className="material-symbols-outlined mb-4 text-[48px] text-rose-400">cloud_off</span>
+        <h1 className="text-xl font-semibold text-text-main">Unable to Load Integration</h1>
+        <p className="mt-2 max-w-md text-sm text-text-muted">{loadError}</p>
+        <button
+          onClick={() => window.location.reload()}
+          className="mt-6 h-10 px-5 rounded-lg bg-primary text-white text-sm font-semibold hover:bg-primary/90 transition-colors"
+        >
+          Retry
+        </button>
       </div>
     );
   }

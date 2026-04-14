@@ -1,49 +1,26 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  Injectable,
-  UnauthorizedException,
-} from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Request } from 'express';
-import { RequestUser } from '../decorators/current-user.decorator';
+import { ExecutionContext, Injectable } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
+import { AuthGuard as PassportAuthGuard } from '@nestjs/passport';
+import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 
 /**
- * Auth stub guard.
+ * Global JWT auth guard.
  *
- * For Phase 1 this validates a static Bearer token configured via AUTH_STUB_SECRET
- * and extracts the user identity from X-User-Id / X-User-Role headers.
- * Full auth (JWT + RBAC) will replace this in a later sprint.
- *
- * How to authenticate in dev:
- *   Authorization: Bearer dev_stub_secret_not_for_production
- *   X-User-Id: <uuid>
- *   X-User-Role: ADMIN
+ * Applied to every route via APP_GUARD. Routes decorated with @Public()
+ * bypass authentication (e.g. /auth/login, /auth/refresh, /health).
  */
 @Injectable()
-export class AuthGuard implements CanActivate {
-  constructor(private readonly config: ConfigService) {}
+export class AuthGuard extends PassportAuthGuard('jwt') {
+  constructor(private readonly reflector: Reflector) {
+    super();
+  }
 
-  canActivate(context: ExecutionContext): boolean {
-    const req = context.switchToHttp().getRequest<Request>();
-    const authHeader = req.headers['authorization'] ?? '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-    const expectedSecret = this.config.get<string>('AUTH_STUB_SECRET');
-
-    if (!token || token !== expectedSecret) {
-      throw new UnauthorizedException('Valid Bearer token required');
-    }
-
-    // Extract user context from headers (Phase 1 stub — replaced by JWT claims later)
-    const userId = (req.headers['x-user-id'] as string) ??
-      this.config.get<string>('AUTH_STUB_USER_ID', 'system-stub-user');
-    const role = (req.headers['x-user-role'] as string) ??
-      this.config.get<string>('AUTH_STUB_USER_ROLE', 'ADMIN');
-
-    const user: RequestUser = { userId, role };
-    (req as any).user = user;
-
-    return true;
+  canActivate(context: ExecutionContext) {
+    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (isPublic) return true;
+    return super.canActivate(context);
   }
 }

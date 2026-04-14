@@ -30,6 +30,9 @@
       "@prisma/engines",
       "prisma",
       "@nestjs/core"
+    ],
+    "ignoredBuiltDependencies": [
+      "bcrypt"
     ]
   }
 }

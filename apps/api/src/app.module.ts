@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ConfigModule } from '@nestjs/config';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+import { AuthGuard } from './common/guards/auth.guard';
 import { PrismaModule } from './prisma/prisma.module';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -22,6 +23,7 @@ import { ProfilesModule } from './modules/profiles/profiles.module';
 import { DemoTargetsModule } from './modules/demo-targets/demo-targets.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { CopilotModule } from './modules/copilot/copilot.module';
+import { SupportModule } from './modules/support/support.module';
 
 @Module({
   imports: [
@@ -47,9 +49,11 @@ import { CopilotModule } from './modules/copilot/copilot.module';
     DemoTargetsModule,
     DashboardModule,
     CopilotModule,
+    SupportModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    { provide: APP_GUARD, useClass: AuthGuard },
   ],
 })
 export class AppModule {}

@@ -1,9 +1,12 @@
 'use client';
 
 import { useState } from 'react';
+import { api } from '@/lib/api-client';
 
 export default function SupportPage() {
   const [submitted, setSubmitted] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState('');
 
   return (
     <div className="max-w-2xl mx-auto py-10 px-6">
@@ -46,9 +49,21 @@ export default function SupportPage() {
           </div>
         ) : (
           <form
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              setSubmitted(true);
+              setSending(true);
+              setError('');
+              const form = e.currentTarget;
+              const subject = (form.elements.namedItem('subject') as HTMLInputElement).value;
+              const message = (form.elements.namedItem('message') as HTMLTextAreaElement).value;
+              try {
+                await api.post('/support', { subject, message });
+                setSubmitted(true);
+              } catch (err) {
+                setError(err instanceof Error ? err.message : 'Failed to send message. Please try again.');
+              } finally {
+                setSending(false);
+              }
             }}
             className="space-y-4 rounded-xl border border-border-soft bg-surface p-6"
           >
@@ -60,6 +75,7 @@ export default function SupportPage() {
               </label>
               <input
                 id="subject"
+                name="subject"
                 type="text"
                 required
                 className="w-full rounded-lg border border-border-soft bg-background-light px-3 py-2 text-[14px] text-text-main focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50"
@@ -73,6 +89,7 @@ export default function SupportPage() {
               </label>
               <textarea
                 id="message"
+                name="message"
                 required
                 rows={4}
                 className="w-full rounded-lg border border-border-soft bg-background-light px-3 py-2 text-[14px] text-text-main focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary/50 resize-none"
@@ -80,11 +97,16 @@ export default function SupportPage() {
               />
             </div>
 
+            {error && (
+              <p className="text-[13px] text-red-600">{error}</p>
+            )}
+
             <button
               type="submit"
-              className="px-5 py-2.5 rounded-lg bg-primary text-white text-[13px] font-semibold hover:bg-primary/90 transition-colors"
+              disabled={sending}
+              className="px-5 py-2.5 rounded-lg bg-primary text-white text-[13px] font-semibold hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
-              Send Message
+              {sending ? 'Sending...' : 'Send Message'}
             </button>
           </form>
         )}

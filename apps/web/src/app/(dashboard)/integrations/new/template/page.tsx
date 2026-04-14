@@ -4,7 +4,6 @@ import { Suspense, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { api } from '@/lib/api-client';
-import { getTemplatesPageData } from '@/components/templates/mockData';
 import type { TemplateItem } from '@/components/templates/types';
 import { DEFAULT_WORKSPACE_SLUG } from '@/lib/workspace';
 
@@ -21,16 +20,12 @@ function TemplateCreateContent() {
   const router = useRouter();
   const templateId = searchParams.get('templateId') ?? undefined;
 
-  // First try mock data for backward compat
-  const mockTemplates = getTemplatesPageData('demo').templates;
-  const mockMatch = templateId ? mockTemplates.find((template) => template.id === templateId) : undefined;
+  const [selectedTemplate, setSelectedTemplate] = useState<TemplateItem | undefined>(undefined);
+  const [loading, setLoading] = useState(!!templateId);
 
-  const [selectedTemplate, setSelectedTemplate] = useState<TemplateItem | undefined>(mockMatch);
-  const [loading, setLoading] = useState(!mockMatch && !!templateId);
-
-  // If not found in mock data, fetch from API
+  // Fetch template from API
   useEffect(() => {
-    if (mockMatch || !templateId) return;
+    if (!templateId) return;
     let cancelled = false;
     api
       .get<any>(`/templates/${templateId}`)
@@ -76,7 +71,7 @@ function TemplateCreateContent() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [templateId, mockMatch]);
+  }, [templateId]);
 
   const [integrationName, setIntegrationName] = useState(
     selectedTemplate ? `${selectedTemplate.name} Integration` : '',

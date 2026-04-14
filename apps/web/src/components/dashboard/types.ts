@@ -1,37 +1,31 @@
-export const DASHBOARD_VIEW_STATES = ['loading', 'empty', 'demo'] as const;
+/* ── Dashboard data types ── */
 
-export type DashboardViewState = (typeof DASHBOARD_VIEW_STATES)[number];
-
-export function toDashboardViewState(value?: string): DashboardViewState {
-  if (value && DASHBOARD_VIEW_STATES.includes(value as DashboardViewState)) {
-    return value as DashboardViewState;
-  }
-  return 'empty';
-}
-
-export interface WorkspaceSummary {
-  workspace: string;
+export interface WorkspaceInfo {
+  name: string;
   environment: string;
-  activeIntegrations: number;
-  openIssues: number;
-  lastDeployment: string;
+  totalIntegrations: number;
+  totalConnections: number;
 }
 
-export interface AttentionMetric {
-  id: 'failed-runs' | 'pending-approvals' | 'connection-issues' | 'replay-queue';
+export interface DashboardKpis {
+  totalIntegrations: number;
+  activeIntegrations: number;
+  draftIntegrations: number;
+  connectedSystems: string;       // "4/6"
+  failingConnections: number;
+  untestedConnections: number;
+  totalRuns: number;
+  successRate: string | null;      // "95.2" or null
+  avgDurationSec: string | null;   // "4.2" or null
+  lastDeployment: string | null;
+}
+
+export interface AttentionItem {
+  id: string;
   label: string;
   icon: string;
   count: number;
-  actionLabel?: string;
-}
-
-export type KpiTone = 'neutral' | 'success' | 'warning' | 'danger';
-
-export interface KpiMetric {
-  id: string;
-  label: string;
-  value: string;
-  tone?: KpiTone;
+  href: string;
 }
 
 export type IntegrationStatus = 'Healthy' | 'Warning' | 'Draft';
@@ -45,20 +39,16 @@ export interface IntegrationRow {
   status: IntegrationStatus;
 }
 
-export type ReleaseStatus = 'Approved' | 'Live';
+export type ConnectionHealth = 'healthy' | 'failing' | 'untested';
 
-export interface ReleaseRow {
+export interface ConnectionRow {
   id: string;
   name: string;
-  path: string;
-  status: ReleaseStatus;
-  time: string;
-}
-
-export interface GuidanceSignal {
-  id: string;
-  label: string;
-  count: number;
+  type: string;
+  system: string;
+  health: ConnectionHealth;
+  lastTest: string;
+  latencyMs: number | null;
 }
 
 export interface ActivityItem {
@@ -68,12 +58,19 @@ export interface ActivityItem {
   time: string;
 }
 
+export interface FailureItem {
+  id: string;
+  integration: string;
+  error: string;
+  time: string;
+}
+
 export interface DashboardData {
-  workspaceSummary: WorkspaceSummary;
-  needsAttention: AttentionMetric[];
-  kpis: KpiMetric[];
+  workspace: WorkspaceInfo;
+  kpis: DashboardKpis;
+  needsAttention: AttentionItem[];
   integrations: IntegrationRow[];
-  releases: ReleaseRow[];
-  guidanceSignals: GuidanceSignal[];
+  connections: ConnectionRow[];
   recentActivity: ActivityItem[];
+  recentFailures: FailureItem[];
 }

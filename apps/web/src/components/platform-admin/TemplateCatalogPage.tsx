@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { getAllTemplatesForAdmin } from '@/components/templates/mockData';
+import { useEffect, useState } from 'react';
+import { api } from '@/lib/api-client';
 import { InlineSelect } from '@/components/ui/FormFields';
 import {
   type TemplateGroup,
@@ -18,8 +18,61 @@ const VISIBILITY_SCOPE_OPTIONS: VisibilityScope[] = [
   'demo_profile_restricted',
 ];
 
+function mapApiTemplate(t: any): TemplateItem {
+  const latestVersion = t.versions?.[0];
+  const isPrebuilt = t.class === 'CERTIFIED';
+  const srcSystem = (t.sourceSystem ?? 'REST API') as TemplateItem['source'];
+  const tgtSystem = (t.targetSystem ?? 'REST API') as TemplateItem['target'];
+  const bo = (t.businessObject ?? 'API Payload').replace(/_/g, ' ');
+  const useCaseLabel = bo.includes('INVOICE') ? 'Invoices'
+    : bo.includes('PURCHASE_ORDER') || bo.includes('Purchase Order') ? 'Purchase Orders'
+    : bo.includes('VENDOR') || bo.includes('SUPPLIER') ? 'Vendor Sync'
+    : `${srcSystem} to ${tgtSystem}`;
+  return {
+    id: t.id,
+    name: t.name,
+    group: isPrebuilt ? 'Prebuilt' : 'Generic',
+    categoryLabel: isPrebuilt ? 'Prebuilt Template' : 'Generic Template',
+    templateTypeTag: isPrebuilt ? 'Prebuilt' : 'Generic',
+    description: t.description ?? '',
+    source: srcSystem,
+    target: tgtSystem,
+    useCase: useCaseLabel as TemplateItem['useCase'],
+    objectType: bo,
+    version: latestVersion?.version ?? 'v1.0',
+    lastUpdated: latestVersion?.publishedAt
+      ? new Date(latestVersion.publishedAt).toLocaleDateString()
+      : 'Recently',
+    updatedDaysAgo: latestVersion?.publishedAt
+      ? Math.max(0, Math.floor((Date.now() - new Date(latestVersion.publishedAt).getTime()) / 86400000))
+      : 0,
+    usageCount: 0,
+    isPublished: true,
+    visibilityScope: 'global' as const,
+    audienceTags: ['general' as const],
+    allowedTenants: [],
+    allowedDemoProfiles: ['generic_enterprise_demo' as const],
+  };
+}
+
 export function TemplateCatalogPage() {
-  const [templates, setTemplates] = useState<TemplateItem[]>(() => getAllTemplatesForAdmin().templates);
+  const [templates, setTemplates] = useState<TemplateItem[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get<any[]>('/templates')
+      .then((rows) => {
+        if (!cancelled) setTemplates(rows.map(mapApiTemplate));
+      })
+      .catch(() => {
+        if (!cancelled) setTemplates([]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const updateTemplate = (id: string, updates: Partial<TemplateItem>) => {
     setTemplates((current) =>
@@ -36,9 +89,12 @@ export function TemplateCatalogPage() {
             UI-level governance view for template type and visibility settings (internal only).
           </p>
         </div>
-        <p className="text-xs font-medium text-text-muted">{templates.length} templates</p>
+        <p className="text-xs font-medium text-text-muted">{loading ? '…' : templates.length} templates</p>
       </div>
 
+      {loading ? (
+        <div className="mt-6 flex items-center justify-center py-12 text-sm text-text-muted">Loading templates…</div>
+      ) : (
       <div className="mt-4 overflow-x-auto rounded-lg border border-border-soft">
         <table className="min-w-[980px] w-full border-collapse text-left">
           <thead className="bg-slate-50">
@@ -110,6 +166,7 @@ export function TemplateCatalogPage() {
           </tbody>
         </table>
       </div>
+      )}
     </section>
   );
 }

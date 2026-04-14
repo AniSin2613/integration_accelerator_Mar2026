@@ -13,7 +13,6 @@ import { WorkflowPreview } from './WorkflowPreview';
 import { ReleaseReadinessPanel } from './ReleaseReadinessPanel';
 import { PromoteDrawer } from './PromoteDrawer';
 import { SelectedNodeDetails } from './SelectedNodeDetails';
-import { getIntegrationOverviewData } from './mockData';
 import {
   type IntegrationOverviewViewState,
   type IntegrationEnvironment,
@@ -423,9 +422,7 @@ function toIntegrationEnvironment(value: string | null): IntegrationEnvironment 
 export function IntegrationOverviewPage({ integrationId, viewState }: IntegrationOverviewPageProps) {
   const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(viewState === 'loading');
-  const [data, setData] = useState<IntegrationOverviewData | null>(
-    viewState === 'demo' ? getIntegrationOverviewData('demo') : null,
-  );
+  const [data, setData] = useState<IntegrationOverviewData | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string>(
     () => data?.header.currentVersionId ?? '—',
   );
@@ -433,12 +430,6 @@ export function IntegrationOverviewPage({ integrationId, viewState }: Integratio
   const [promoteTarget, setPromoteTarget] = useState<IntegrationEnvironment | null>(null);
 
   useEffect(() => {
-    if (viewState === 'demo') {
-      setData(getIntegrationOverviewData('demo'));
-      setIsLoading(false);
-      return;
-    }
-
     let cancelled = false;
     const load = async () => {
       try {

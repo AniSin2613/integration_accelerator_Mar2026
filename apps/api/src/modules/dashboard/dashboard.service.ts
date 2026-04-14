@@ -8,7 +8,7 @@ export class DashboardService {
   async getSummary(workspaceId?: string) {
     const whereWorkspace = workspaceId ? { workspaceId } : {};
 
-    // ── Integrations overview ──
+    // ── Integrations ──
     const integrations = await this.prisma.integrationDefinition.findMany({
       where: { ...whereWorkspace },
       include: {
@@ -19,8 +19,9 @@ export class DashboardService {
       take: 20,
     });
 
+    const totalIntegrations = integrations.length;
     const activeIntegrations = integrations.filter((i) => i.status !== 'DRAFT').length;
-    const healthyIntegrations = integrations.filter((i) => i.status === 'LIVE').length;
+    const draftIntegrations = integrations.filter((i) => i.status === 'DRAFT').length;
     const attentionIntegrations = integrations.filter((i) => i.status === 'ATTENTION_NEEDED').length;
 
     // ── Workspace info ──
@@ -34,44 +35,82 @@ export class DashboardService {
       if (ws) workspaceName = ws.name;
     }
 
+    // ── Connections ──
+    const connections = await this.prisma.connectionDefinition.findMany({
+      where: { ...whereWorkspace, deletedAt: null },
+      select: {
+        id: true,
+        name: true,
+        family: true,
+        testHistory: {
+          orderBy: { testedAt: 'desc' },
+          take: 1,
+          select: { success: true, testedAt: true, errorMessage: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    const totalConnections = connections.length;
+    const healthyConnections = connections.filter(
+      (c) => c.testHistory.length > 0 && c.testHistory[0].success,
+    ).length;
+    const failingConnections = connections.filter(
+      (c) => c.testHistory.length > 0 && !c.testHistory[0].success,
+    ).length;
+    const untestedConnections = connections.filter(
+      (c) => c.testHistory.length === 0,
+    ).length;
+
     // ── Health / Run stats ──
     const recentRuns = await this.prisma.workflowRun.findMany({
       orderBy: { createdAt: 'desc' },
       take: 200,
-      select: { status: true, durationMs: true, createdAt: true },
+      select: {
+        id: true,
+        status: true,
+        durationMs: true,
+        errorCount: true,
+        createdAt: true,
+        integrationDefId: true,
+      },
     });
+
+    // Fetch integration names for failed runs
+    const failedRuns_ = recentRuns.filter((r) => r.status === 'FAILED').slice(0, 8);
+    const integrationIds = [...new Set(failedRuns_.map((r) => r.integrationDefId))];
+    const integrationNames = integrationIds.length > 0
+      ? await this.prisma.integrationDefinition.findMany({
+          where: { id: { in: integrationIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameMap = new Map(integrationNames.map((i) => [i.id, i.name]));
 
     const totalRuns = recentRuns.length;
     const successRuns = recentRuns.filter((r) => r.status === 'SUCCESS').length;
     const failedRuns = recentRuns.filter((r) => r.status === 'FAILED').length;
-    const successRate = totalRuns > 0 ? ((successRuns / totalRuns) * 100).toFixed(1) + '%' : '--';
+    const successRate = totalRuns > 0 ? ((successRuns / totalRuns) * 100).toFixed(1) : null;
+    const avgDuration = totalRuns > 0
+      ? (recentRuns.reduce((sum, r) => sum + (r.durationMs ?? 0), 0) / totalRuns / 1000).toFixed(1)
+      : null;
+
+    // ── Recent failures ──
+    const recentFailures = failedRuns_
+      .map((r) => ({
+        id: r.id,
+        integration: nameMap.get(r.integrationDefId) ?? 'Unknown',
+        error: (r.errorCount ?? 0) > 0 ? `${r.errorCount} error(s)` : 'Pipeline failed',
+        time: this.timeAgo(r.createdAt),
+      }));
 
     // ── Needs Attention ──
     const pendingApprovals = await this.prisma.approvalRequest.count({
       where: { status: 'SUBMITTED' },
     });
 
-    const connectionIssues = await this.prisma.connectionTestHistory.count({
-      where: { success: false },
-    });
-
     const replayQueue = await this.prisma.replayRequest.count({
       where: { status: 'PENDING' },
-    });
-
-    // ── Recent releases ──
-    const releases = await this.prisma.releaseArtifact.findMany({
-      where: { ...whereWorkspace },
-      include: {
-        integrationDef: { select: { name: true } },
-        environmentReleases: {
-          include: { environment: { select: { type: true } } },
-          orderBy: { createdAt: 'desc' },
-          take: 1,
-        },
-      },
-      orderBy: { updatedAt: 'desc' },
-      take: 10,
     });
 
     // ── Last deployment time ──
@@ -85,33 +124,36 @@ export class DashboardService {
     const auditLogs = await this.prisma.auditLog.findMany({
       ...(workspaceId ? { where: { workspaceId } } : {}),
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      take: 8,
       select: { id: true, action: true, entityType: true, entityId: true, createdAt: true, details: true },
     });
 
     // ── Format response ──
     return {
-      workspaceSummary: {
-        workspace: workspaceName,
+      workspace: {
+        name: workspaceName,
         environment: environmentLabel,
+        totalIntegrations,
+        totalConnections,
+      },
+      kpis: {
+        totalIntegrations,
         activeIntegrations,
-        openIssues: attentionIntegrations + failedRuns,
-        lastDeployment: lastDeploy?.deployedAt
-          ? this.timeAgo(lastDeploy.deployedAt)
-          : '--',
+        draftIntegrations,
+        connectedSystems: `${healthyConnections}/${totalConnections}`,
+        failingConnections,
+        untestedConnections,
+        totalRuns,
+        successRate,
+        avgDurationSec: avgDuration,
+        lastDeployment: lastDeploy?.deployedAt ? this.timeAgo(lastDeploy.deployedAt) : null,
       },
       needsAttention: [
-        { id: 'failed-runs', label: 'Failed Runs', icon: 'error', count: failedRuns, actionLabel: 'Review' },
-        { id: 'pending-approvals', label: 'Pending Approvals', icon: 'approval', count: pendingApprovals, actionLabel: 'Review' },
-        { id: 'connection-issues', label: 'Connection Issues', icon: 'cable', count: connectionIssues, actionLabel: 'Review' },
-        { id: 'replay-queue', label: 'Replay Queue', icon: 'replay', count: replayQueue, actionLabel: 'Review' },
-      ],
-      kpis: [
-        { id: 'active-integrations', label: 'Active Integrations', value: String(activeIntegrations), tone: 'neutral' },
-        { id: 'healthy-integrations', label: 'Healthy Integrations', value: String(healthyIntegrations), tone: healthyIntegrations > 0 ? 'success' : 'neutral' },
-        { id: 'success-rate', label: 'Success Rate', value: successRate, tone: totalRuns > 0 && successRuns / totalRuns >= 0.95 ? 'success' : totalRuns > 0 && successRuns / totalRuns < 0.8 ? 'danger' : 'neutral' },
-        { id: 'last-deployment', label: 'Last Deployment', value: lastDeploy?.deployedAt ? this.timeAgo(lastDeploy.deployedAt) : '--', tone: 'neutral' },
-      ],
+        { id: 'failed-runs', label: 'Failed Runs', icon: 'error', count: failedRuns, href: '/monitoring' },
+        { id: 'pending-approvals', label: 'Pending Approvals', icon: 'approval', count: pendingApprovals, href: '/integrations' },
+        { id: 'connection-issues', label: 'Connection Issues', icon: 'cable', count: failingConnections, href: '/connections' },
+        { id: 'replay-queue', label: 'Replay Queue', icon: 'replay', count: replayQueue, href: '/monitoring' },
+      ].filter((item) => item.count > 0),
       integrations: integrations.slice(0, 10).map((i) => ({
         id: i.id,
         name: i.name,
@@ -120,14 +162,14 @@ export class DashboardService {
         lastRun: '--',
         status: this.mapStatus(i.status),
       })),
-      releases: releases.slice(0, 5).map((r) => ({
-        id: r.id,
-        name: `${r.integrationDef.name} ${r.version}`,
-        path: r.environmentReleases[0]?.environment?.type
-          ? `Promoted to ${r.environmentReleases[0].environment.type}`
-          : 'Not deployed',
-        status: r.status === 'DEPLOYED' ? 'Live' : r.status === 'APPROVED' ? 'Approved' : r.status,
-        time: this.timeAgo(r.updatedAt),
+      connections: connections.slice(0, 10).map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.family,
+        system: c.family,
+        health: c.testHistory.length === 0 ? 'untested' : c.testHistory[0].success ? 'healthy' : 'failing',
+        lastTest: c.testHistory.length > 0 ? this.timeAgo(c.testHistory[0].testedAt) : '--',
+        latencyMs: null,
       })),
       recentActivity: auditLogs.map((a) => ({
         id: a.id,
@@ -135,6 +177,7 @@ export class DashboardService {
         message: this.formatAuditMessage(a.action, a.entityType, a.entityId),
         time: this.timeAgo(a.createdAt),
       })),
+      recentFailures,
     };
   }
 

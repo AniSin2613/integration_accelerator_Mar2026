@@ -36,7 +36,7 @@ export function TemplateCard({ template }: TemplateCardProps) {
           Use Template
         </Link>
         <Link
-          href={`/templates?template=${template.id}`}
+          href={`/integrations/new/template?templateId=${template.id}&preview=true`}
           className="inline-flex h-9 items-center justify-center rounded-lg border border-border-soft bg-surface px-3.5 text-sm font-semibold text-text-main transition-colors hover:bg-slate-50"
         >
           View Details

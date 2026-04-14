@@ -1,11 +1,34 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { api } from '@/lib/api-client';
 import { GlobalSearchModal } from './GlobalSearchModal';
 import { NotificationsDropdown } from './NotificationsDropdown';
 import { WorkspaceSelector } from './WorkspaceSelector';
+
+interface UserProfile {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+}
+
+function getInitials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0].toUpperCase())
+    .join('');
+}
+
+function formatRole(role: string): string {
+  return role
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 interface TopbarProps {
   onOpenSidebar: () => void;
@@ -27,8 +50,16 @@ const ENV_SELECT_CLASS: Record<TopbarEnvironment, string> = {
 export function Topbar({ onOpenSidebar }: TopbarProps) {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [selectedEnvironment, setSelectedEnvironment] = useState<TopbarEnvironment>('Dev');
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const router = useRouter();
   const pathname = usePathname();
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fetch user profile
+  useEffect(() => {
+    api.get<UserProfile>('/auth/me').then(setUser).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const syncEnvironmentFromUrl = () => {
@@ -53,6 +84,27 @@ export function Topbar({ onOpenSidebar }: TopbarProps) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, []);
+
+  // Close user menu on click outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' });
+    } catch {
+      // Even if the API call fails, clear cookies client-side
+    }
+    // Force a full reload to /login so middleware clears state
+    window.location.href = '/login';
+  };
 
   const handleEnvironmentChange = (nextEnvironment: TopbarEnvironment) => {
     setSelectedEnvironment(nextEnvironment);
@@ -126,16 +178,53 @@ export function Topbar({ onOpenSidebar }: TopbarProps) {
 
         <NotificationsDropdown />
 
-        <button
-          type="button"
-          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
-          aria-label="User menu"
-        >
-          <div className="w-8 h-8 rounded-full bg-primary/10 text-primary text-[12px] font-bold flex items-center justify-center">
-            AD
-          </div>
-          <span className="hidden sm:block text-[13px] font-medium text-text-main">Admin</span>
-        </button>
+        <div className="relative" ref={userMenuRef}>
+          <button
+            type="button"
+            onClick={() => setUserMenuOpen((prev) => !prev)}
+            className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            aria-label="User menu"
+            aria-haspopup="true"
+            aria-expanded={userMenuOpen}
+          >
+            <div className="w-8 h-8 rounded-full bg-primary/10 text-primary text-[12px] font-bold flex items-center justify-center">
+              {user ? getInitials(user.name) : '··'}
+            </div>
+            <span className="hidden sm:block text-[13px] font-medium text-text-main">{user?.name ?? 'User'}</span>
+            <span className="material-symbols-outlined text-[14px] text-text-muted hidden sm:block">expand_more</span>
+          </button>
+
+          {userMenuOpen && (
+            <div className="absolute right-0 top-full mt-2 w-[200px] rounded-xl border border-border-soft bg-surface shadow-2xl z-50 overflow-hidden">
+              <div className="px-4 py-3 border-b border-border-soft bg-slate-50/50">
+                <p className="text-[13px] font-semibold text-text-main">{user?.name ?? 'User'}</p>
+                <p className="text-[11px] text-text-muted truncate">{user ? formatRole(user.role) : ''}</p>
+              </div>
+              <ul className="py-1">
+                <li>
+                  <Link
+                    href="/settings"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-text-main hover:bg-slate-50 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px] text-text-muted">settings</span>
+                    Settings
+                  </Link>
+                </li>
+                <li>
+                  <button
+                    type="button"
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] text-rose-600 hover:bg-rose-50 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[16px]">logout</span>
+                    Sign Out
+                  </button>
+                </li>
+              </ul>
+            </div>
+          )}
+        </div>
       </div>
 
       {isSearchOpen && <GlobalSearchModal onClose={() => setIsSearchOpen(false)} />}

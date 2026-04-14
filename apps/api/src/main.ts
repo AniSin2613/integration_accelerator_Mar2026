@@ -2,9 +2,13 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as express from 'express';
+import cookieParser from 'cookie-parser';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+
+  // Parse cookies — required for JWT auth tokens
+  app.use(cookieParser());
 
   // Allow receiving raw XML payloads for internal demo target endpoint.
   app.use('/demo-targets/xml', express.text({ type: ['application/xml', 'text/xml', 'application/*+xml'] }));

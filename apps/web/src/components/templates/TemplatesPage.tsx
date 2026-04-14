@@ -1,7 +1,6 @@
 'use client';
 
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
-import { getTemplatesPageData } from './mockData';
 import { TemplateGroupSection } from './TemplateGroupSection';
 import { api } from '@/lib/api-client';
 import { TemplatesEmptyFilteredState } from './TemplatesEmptyFilteredState';
@@ -84,7 +83,7 @@ export function TemplatesPage({ viewState }: TemplatesPageProps) {
   const [target, setTarget] = useState<TemplateTargetFilter>('All Targets');
   const [useCase, setUseCase] = useState<TemplateUseCaseFilter>('All Use Cases');
   const [sortBy, setSortBy] = useState<TemplateSortOption>('Recommended');
-  const [apiTemplates, setApiTemplates] = useState<TemplateItem[] | null>(null);
+  const [apiTemplates, setApiTemplates] = useState<TemplateItem[]>([]);
   const [apiLoading, setApiLoading] = useState(true);
 
   const deferredSearchValue = useDeferredValue(searchValue.trim().toLowerCase());
@@ -137,29 +136,25 @@ export function TemplatesPage({ viewState }: TemplatesPageProps) {
       })
       .catch(() => {
         if (!cancelled) {
-          // Fallback to mock data if API is unavailable
-          setApiTemplates(null);
+          setApiTemplates([]);
           setApiLoading(false);
         }
       });
     return () => { cancelled = true; };
   }, []);
 
-  // Use API data if available, otherwise fall back to mock data
+  // Use API data
   const data = useMemo(() => {
-    if (apiTemplates) {
-      return {
-        summary: {
-          total: apiTemplates.length,
-          prebuilt: apiTemplates.filter((t) => t.group === 'Prebuilt').length,
-          generic: apiTemplates.filter((t) => t.group === 'Generic').length,
-          recentlyUpdated: apiTemplates.filter((t) => t.updatedDaysAgo <= 7).length,
-        },
-        templates: apiTemplates,
-      };
-    }
-    return getTemplatesPageData(viewState);
-  }, [apiTemplates, viewState]);
+    return {
+      summary: {
+        total: apiTemplates.length,
+        prebuilt: apiTemplates.filter((t) => t.group === 'Prebuilt').length,
+        generic: apiTemplates.filter((t) => t.group === 'Generic').length,
+        recentlyUpdated: apiTemplates.filter((t) => t.updatedDaysAgo <= 7).length,
+      },
+      templates: apiTemplates,
+    };
+  }, [apiTemplates]);
 
   const categoryOptions = useMemo<TemplateCategoryFilter[]>(() => {
     const options: TemplateCategoryFilter[] = ['All'];

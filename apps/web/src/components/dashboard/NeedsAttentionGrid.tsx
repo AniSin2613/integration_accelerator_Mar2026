@@ -1,36 +1,97 @@
-import { type AttentionMetric } from './types';
+import Link from 'next/link';
+import { type DashboardKpis, type AttentionItem } from './types';
 
-interface NeedsAttentionGridProps {
-  items: AttentionMetric[];
+/* ── KPI Cards Row ── */
+
+interface KpiCardsRowProps {
+  kpis: DashboardKpis;
 }
 
-const ICON_TINT: Record<AttentionMetric['id'], string> = {
-  'failed-runs': 'text-danger bg-danger/10',
-  'pending-approvals': 'text-warning bg-warning/10',
-  'connection-issues': 'text-warning bg-warning/10',
-  'replay-queue': 'text-accent-blue bg-accent-blue/10',
+export function KpiCardsRow({ kpis }: KpiCardsRowProps) {
+  const cards = [
+    {
+      label: 'Total Integrations',
+      value: String(kpis.totalIntegrations),
+      sub: `${kpis.draftIntegrations} draft · ${kpis.activeIntegrations} active`,
+      icon: 'integration_instructions',
+      color: 'text-primary bg-primary/10',
+    },
+    {
+      label: 'Active Pipelines',
+      value: String(kpis.activeIntegrations),
+      sub: `${kpis.activeIntegrations} live`,
+      icon: 'play_circle',
+      color: 'text-emerald-600 bg-emerald-50',
+    },
+    {
+      label: 'Connected Systems',
+      value: kpis.connectedSystems,
+      sub: kpis.failingConnections > 0
+        ? `${kpis.failingConnections} failing`
+        : kpis.untestedConnections > 0
+          ? `${kpis.untestedConnections} untested`
+          : 'All healthy',
+      icon: 'hub',
+      color: kpis.failingConnections > 0 ? 'text-red-600 bg-red-50' : 'text-blue-600 bg-blue-50',
+    },
+    {
+      label: 'Total Runs',
+      value: String(kpis.totalRuns),
+      sub: kpis.totalRuns > 0
+        ? `avg ${kpis.avgDurationSec}s`
+        : 'No runs yet',
+      icon: 'bolt',
+      color: 'text-amber-600 bg-amber-50',
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      {cards.map((card) => (
+        <article key={card.label} className="rounded-xl border border-border-soft bg-surface p-4 shadow-soft">
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${card.color}`}>
+              <span className="material-symbols-outlined text-[18px]">{card.icon}</span>
+            </div>
+            <p className="text-[13px] text-text-muted font-medium">{card.label}</p>
+          </div>
+          <p className="text-[28px] leading-none font-bold text-text-main mt-3 tabular-nums">{card.value}</p>
+          <p className="text-[12px] text-text-muted mt-1">{card.sub}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+/* ── Action Required Row ── */
+
+interface ActionRequiredRowProps {
+  items: AttentionItem[];
+}
+
+const ATTENTION_COLORS: Record<string, string> = {
+  'failed-runs': 'text-red-700 bg-red-50 border-red-200',
+  'pending-approvals': 'text-amber-700 bg-amber-50 border-amber-200',
+  'connection-issues': 'text-red-700 bg-red-50 border-red-200',
+  'replay-queue': 'text-blue-700 bg-blue-50 border-blue-200',
 };
 
-export function NeedsAttentionGrid({ items }: NeedsAttentionGridProps) {
+export function ActionRequiredRow({ items }: ActionRequiredRowProps) {
+  if (items.length === 0) return null;
+
   return (
-    <section className="space-y-3">
-      <h2 className="text-[16px] font-semibold text-text-main">Needs Attention</h2>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+    <section className="space-y-2">
+      <h2 className="text-[14px] font-semibold text-text-muted uppercase tracking-wide">Action Required</h2>
+      <div className="flex flex-wrap gap-3">
         {items.map((item) => (
-          <article key={item.id} className={`rounded-xl border border-border-soft bg-surface shadow-soft ${item.count === 0 ? 'py-3 px-4' : 'p-4'}`}>
-            <div className="flex items-start justify-between gap-3">
-              <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${ICON_TINT[item.id]}`}>
-                <span className="material-symbols-outlined text-[18px]">{item.icon}</span>
-              </div>
-              {item.count > 0 && item.actionLabel && (
-                <button type="button" className="text-[12px] font-medium text-text-muted hover:text-text-main transition-colors">
-                  {item.actionLabel}
-                </button>
-              )}
-            </div>
-            <p className={`text-sm text-text-muted ${item.count === 0 ? 'mt-2.5' : 'mt-4'}`}>{item.label}</p>
-            <p className="text-[30px] leading-none font-bold text-text-main mt-1 tabular-nums">{item.count}</p>
-          </article>
+          <Link
+            key={item.id}
+            href={item.href}
+            className={`inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-[13px] font-semibold transition-colors hover:shadow-sm ${ATTENTION_COLORS[item.id] ?? 'text-text-main bg-surface border-border-soft'}`}
+          >
+            <span className="material-symbols-outlined text-[16px]">{item.icon}</span>
+            {item.count} {item.label}
+          </Link>
         ))}
       </div>
     </section>

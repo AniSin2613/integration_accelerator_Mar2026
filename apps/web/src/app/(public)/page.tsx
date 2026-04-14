@@ -236,10 +236,10 @@ export default function HeroPage() {
         </div>
         <div className="hidden md:flex flex-1 justify-end gap-8">
           <nav className="flex items-center gap-8">
-            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#">Platform</a>
-            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#">Solutions</a>
-            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#">Resources</a>
-            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#">Pricing</a>
+            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#platform">Platform</a>
+            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#solutions">Solutions</a>
+            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#how-it-works">Resources</a>
+            <a className="text-text-muted hover:text-primary transition-colors text-sm font-medium" href="#cta">Pricing</a>
           </nav>
           <div className="flex gap-3">
             <Link
@@ -248,9 +248,9 @@ export default function HeroPage() {
             >
               Sign In
             </Link>
-            <button className="flex items-center justify-center rounded-lg h-10 px-5 bg-primary text-white hover:bg-primary/90 transition-colors text-sm font-semibold shadow-sm">
+            <Link href="/support" className="flex items-center justify-center rounded-lg h-10 px-5 bg-primary text-white hover:bg-primary/90 transition-colors text-sm font-semibold shadow-sm">
               Book a Demo
-            </button>
+            </Link>
           </div>
         </div>
         <button className="md:hidden text-text-main">
@@ -279,9 +279,9 @@ export default function HeroPage() {
               </p>
             </div>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <button className="w-full sm:w-[170px] h-[52px] rounded-lg bg-primary text-white text-[15px] font-semibold flex items-center justify-center shadow-soft hover:bg-primary/90 transition-all">
+              <Link href="/support" className="w-full sm:w-[170px] h-[52px] rounded-lg bg-primary text-white text-[15px] font-semibold flex items-center justify-center shadow-soft hover:bg-primary/90 transition-all">
                 Book a Demo
-              </button>
+              </Link>
               <Link
                 href="/login"
                 className="w-full sm:w-[190px] h-[52px] rounded-lg bg-surface text-text-main border border-border-subtle text-[15px] font-semibold flex items-center justify-center shadow-sm hover:bg-gray-50 transition-all"
@@ -306,7 +306,7 @@ export default function HeroPage() {
       {/* ─────────────────────────────────────────────────────────────────── */}
       {/* Section 2: Why Cogniviti Bridge                                    */}
       {/* ─────────────────────────────────────────────────────────────────── */}
-      <section className="bg-surface py-24 lg:py-32">
+      <section id="platform" className="bg-surface py-24 lg:py-32">
         <div className="max-w-[1280px] mx-auto px-6 lg:px-10">
           <div className="max-w-[720px] mx-auto text-center mb-16">
             <h2 className="text-text-main text-[32px] lg:text-[40px] font-bold leading-[1.15] tracking-[-0.02em] mb-5">
@@ -355,7 +355,7 @@ export default function HeroPage() {
       {/* ─────────────────────────────────────────────────────────────────── */}
       {/* Section 3: How It Works                                            */}
       {/* ─────────────────────────────────────────────────────────────────── */}
-      <section className="bg-background-light py-24 lg:py-32">
+      <section id="how-it-works" className="bg-background-light py-24 lg:py-32">
         <div className="max-w-[1280px] mx-auto px-6 lg:px-10">
           <h2 className="text-center text-text-main text-[32px] lg:text-[40px] font-bold leading-[1.15] tracking-[-0.02em] mb-16">
             From setup to go-live in a guided workflow
@@ -451,7 +451,7 @@ export default function HeroPage() {
       {/* ─────────────────────────────────────────────────────────────────── */}
       {/* Section 5: Templates & Use Cases                                   */}
       {/* ─────────────────────────────────────────────────────────────────── */}
-      <section className="bg-background-light py-24 lg:py-32">
+      <section id="solutions" className="bg-background-light py-24 lg:py-32">
         <div className="max-w-[1280px] mx-auto px-6 lg:px-10">
           <div className="max-w-[720px] mx-auto text-center mb-16">
             <h2 className="text-text-main text-[32px] lg:text-[40px] font-bold leading-[1.15] tracking-[-0.02em] mb-5">
@@ -678,7 +678,7 @@ export default function HeroPage() {
       {/* ─────────────────────────────────────────────────────────────────── */}
       {/* Section 8: Final CTA                                               */}
       {/* ─────────────────────────────────────────────────────────────────── */}
-      <section className="bg-[#0F172A] py-24 lg:py-28">
+      <section id="cta" className="bg-[#0F172A] py-24 lg:py-28">
         <div className="max-w-[720px] mx-auto px-6 lg:px-10 text-center">
           <h2 className="text-white text-[32px] lg:text-[40px] font-bold leading-[1.15] tracking-[-0.02em] mb-5">
             Accelerate enterprise integrations with more structure and less effort
@@ -688,12 +688,12 @@ export default function HeroPage() {
             enterprise controls intact.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <button className="w-full sm:w-[170px] h-[52px] rounded-lg bg-primary text-white text-[15px] font-semibold flex items-center justify-center shadow-soft hover:bg-primary/90 transition-all">
+            <Link href="/support" className="w-full sm:w-[170px] h-[52px] rounded-lg bg-primary text-white text-[15px] font-semibold flex items-center justify-center shadow-soft hover:bg-primary/90 transition-all">
               Book a Demo
-            </button>
-            <button className="w-full sm:w-[170px] h-[52px] rounded-lg bg-white/10 text-white border border-white/20 text-[15px] font-semibold flex items-center justify-center hover:bg-white/15 transition-all">
+            </Link>
+            <Link href="/support" className="w-full sm:w-[170px] h-[52px] rounded-lg bg-white/10 text-white border border-white/20 text-[15px] font-semibold flex items-center justify-center hover:bg-white/15 transition-all">
               Talk to Us
-            </button>
+            </Link>
           </div>
         </div>
       </section>
@@ -728,9 +728,14 @@ export default function HeroPage() {
             <div>
               <h4 className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mb-4">Product</h4>
               <ul className="flex flex-col gap-2.5">
-                {['Platform', 'Solutions', 'Pricing', 'Sign In'].map((item) => (
-                  <li key={item}>
-                    <a href="#" className="text-slate-500 hover:text-white transition-colors text-[13px]">{item}</a>
+                {[
+                  { label: 'Platform', href: '#platform' },
+                  { label: 'Solutions', href: '#solutions' },
+                  { label: 'Pricing', href: '#cta' },
+                  { label: 'Sign In', href: '/login' },
+                ].map((item) => (
+                  <li key={item.label}>
+                    <a href={item.href} className="text-slate-500 hover:text-white transition-colors text-[13px]">{item.label}</a>
                   </li>
                 ))}
               </ul>
@@ -739,9 +744,14 @@ export default function HeroPage() {
             <div>
               <h4 className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mb-4">Resources</h4>
               <ul className="flex flex-col gap-2.5">
-                {['Documentation', 'Use Cases', 'Contact', 'Request Access'].map((item) => (
-                  <li key={item}>
-                    <a href="#" className="text-slate-500 hover:text-white transition-colors text-[13px]">{item}</a>
+                {[
+                  { label: 'Documentation', href: '/docs' },
+                  { label: 'Use Cases', href: '#solutions' },
+                  { label: 'Contact', href: '/support' },
+                  { label: 'Request Access', href: '/login' },
+                ].map((item) => (
+                  <li key={item.label}>
+                    <a href={item.href} className="text-slate-500 hover:text-white transition-colors text-[13px]">{item.label}</a>
                   </li>
                 ))}
               </ul>
@@ -750,9 +760,13 @@ export default function HeroPage() {
             <div>
               <h4 className="text-slate-400 text-[11px] font-bold uppercase tracking-wider mb-4">Company</h4>
               <ul className="flex flex-col gap-2.5">
-                {['Cogniviti Labs', 'Privacy Policy', 'Terms of Service'].map((item) => (
-                  <li key={item}>
-                    <a href="#" className="text-slate-500 hover:text-white transition-colors text-[13px]">{item}</a>
+                {[
+                  { label: 'Cogniviti Labs', href: '/' },
+                  { label: 'Privacy Policy', href: '/privacy' },
+                  { label: 'Terms of Service', href: '/terms' },
+                ].map((item) => (
+                  <li key={item.label}>
+                    <a href={item.href} className="text-slate-500 hover:text-white transition-colors text-[13px]">{item.label}</a>
                   </li>
                 ))}
               </ul>
@@ -761,8 +775,8 @@ export default function HeroPage() {
           <div className="border-t border-slate-800 pt-8 flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-slate-600 text-[12px]">&copy; {new Date().getFullYear()} Cogniviti Labs. All rights reserved.</p>
             <div className="flex gap-6">
-              <a href="#" className="text-slate-600 hover:text-slate-400 transition-colors text-[12px]">Privacy</a>
-              <a href="#" className="text-slate-600 hover:text-slate-400 transition-colors text-[12px]">Terms</a>
+              <a href="/privacy" className="text-slate-600 hover:text-slate-400 transition-colors text-[12px]">Privacy</a>
+              <a href="/terms" className="text-slate-600 hover:text-slate-400 transition-colors text-[12px]">Terms</a>
             </div>
           </div>
         </div>

@@ -270,6 +270,7 @@ model User {
   reviewedApprovals  ApprovalRequest[]  @relation("ReviewedBy")
   replayRequests     ReplayRequest[]
   auditLogs          AuditLog[]
+  supportTickets     SupportTicket[]
 }
 
 model Membership {
@@ -1120,5 +1121,22 @@ model ProfileRebasePlan {
   candidateEffectiveProfileVersion EffectiveProfileVersion? @relation("RebaseCandidateEffectiveProfileVersion", fields: [candidateEffectiveProfileVersionId], references: [id], onDelete: SetNull)
 
   @@index([workspaceId, integrationDefId, direction])
+  @@index([status])
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String?
+  name      String?
+  email     String?
+  subject   String
+  message   String
+  status    String   @default("OPEN")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
   @@index([status])
 }
